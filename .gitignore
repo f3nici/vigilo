@@ -1,0 +1,20 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+# Local attachment volume
+files/
+
+# Playwright
+test-results/
+playwright-report/
+.playwright/
+
+.DS_Store
+*.log

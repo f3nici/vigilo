@@ -1,0 +1,35 @@
+{
+  "name": "@vigilo/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "migrate": "tsx src/db/migrate.ts",
+    "db:generate": "drizzle-kit generate",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@vigilo/shared": "*",
+    "drizzle-orm": "^0.38.3",
+    "express": "^5.0.1",
+    "helmet": "^8.0.0",
+    "pino": "^9.6.0",
+    "pino-http": "^10.4.0",
+    "postgres": "^3.4.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.7",
+    "@types/supertest": "^6.0.2",
+    "drizzle-kit": "^0.30.2",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}

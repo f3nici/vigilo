@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="Care records for a disability support team." />
+    <meta name="theme-color" content="#0F6E6E" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#141311" media="(prefers-color-scheme: dark)" />
+    <title>Vigilo</title>
+    <script>
+      // Set the theme before first paint. Overnight checks happen at 2am next
+      // to a sleeping person, so a white flash is a real problem (doc 08 §3).
+      (function () {
+        try {
+          var stored = localStorage.getItem('vigilo.theme');
+          var dark =
+            stored === 'dark' ||
+            (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark', dark);
+        } catch (e) {
+          /* private mode, fall through to the media query */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

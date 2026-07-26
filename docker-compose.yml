@@ -1,0 +1,64 @@
+name: vigilo
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vigilo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vigilo}
+      POSTGRES_DB: ${POSTGRES_DB:-vigilo}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-vigilo} -d ${POSTGRES_DB:-vigilo}']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    image: ${IMAGE_PREFIX:-docker.io/f3nici/vigilo}-api:${TAG:-local}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://${POSTGRES_USER:-vigilo}:${POSTGRES_PASSWORD:-vigilo}@db:5432/${POSTGRES_DB:-vigilo}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      BUILD_HASH: ${BUILD_HASH:-local}
+      # https://localhost is the Capacitor origin. Allowed from the first
+      # deploy so native sign-in does not fail silently later.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,https://localhost}
+      SESSION_SAMESITE: ${SESSION_SAMESITE:-lax}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  web:
+    build:
+      context: .
+      dockerfile: packages/app/Dockerfile
+    image: ${IMAGE_PREFIX:-docker.io/f3nici/vigilo}-web:${TAG:-local}
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      # 8080 is taken by Partforge on the dev box.
+      - '${WEB_PORT:-8081}:80'
+
+volumes:
+  db-data:
