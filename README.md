@@ -3,8 +3,21 @@
 Care records platform for a disability support team. Participant diaries and
 admin-defined observation checks, on web, Android and iOS, working offline.
 
-Status: **planning only.** No code has been written yet. This repository
-currently holds the documents a build session needs to implement the product.
+Status: **Phase 0 (foundations) built.** The skeleton deploys: monorepo, API with
+migrations and health endpoints, Vue app shell with the design system, the three
+platform adapters, Docker Compose and CI. There is no sign-in and no participant
+data yet. Phase 1 (identity and access) is next. See
+[09-roadmap.md](docs/09-roadmap.md).
+
+## Running it
+
+```bash
+cp .env.example .env
+docker compose up --build      # app on :8081, API under /api
+```
+
+`docker compose run --rm api npm test` runs the API tests, `npm test` at the root
+runs all three workspaces.
 
 ## What it is
 

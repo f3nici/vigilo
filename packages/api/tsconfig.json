@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "lib": ["ES2023"],
+    // pino-http augments http.IncomingMessage with `log`, and the routes rely
+    // on it, so the augmentation is loaded globally rather than per file.
+    "types": ["node", "pino-http"]
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "test/**/*"]
+}

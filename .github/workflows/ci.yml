@@ -1,0 +1,151 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY_IMAGE_PREFIX: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/vigilo
+
+jobs:
+  check:
+    name: Typecheck, lint and test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: vigilo
+          POSTGRES_PASSWORD: vigilo
+          POSTGRES_DB: vigilo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vigilo -d vigilo_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+        env:
+          TEST_DATABASE_URL: postgres://vigilo:vigilo@localhost:5432/vigilo_test
+
+      - name: Build the SPA
+        run: npm run build --workspace @vigilo/app
+
+  images:
+    name: Build and push images
+    runs-on: ubuntu-latest
+    needs: check
+    permissions:
+      contents: read
+
+    strategy:
+      matrix:
+        include:
+          - name: api
+            dockerfile: packages/api/Dockerfile
+          - name: web
+            dockerfile: packages/app/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY_IMAGE_PREFIX }}-${{ matrix.name }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          # Always push. The dev box verifies a deployment by pulling and
+          # running the built image, not by trusting this job's green tick,
+          # so branch builds have to be pullable too.
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  smoke:
+    name: Smoke test the built images
+    runs-on: ubuntu-latest
+    needs: images
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Run the pushed images
+        env:
+          IMAGE_PREFIX: ${{ env.REGISTRY_IMAGE_PREFIX }}
+          TAG: sha-${{ github.sha }}
+          BUILD_HASH: ${{ github.sha }}
+        run: |
+          docker compose pull api web
+          docker compose up -d --no-build
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8081/api/ready | grep -q '"status":"ready"'; then
+              echo "ready"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "the stack never became ready"
+          docker compose logs
+          exit 1
+
+      - name: Serve the SPA
+        run: curl -fsS http://localhost:8081/ | grep -q '<div id="app">'
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

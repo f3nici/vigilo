@@ -1,0 +1,180 @@
+@import 'tailwindcss';
+
+/*
+ * Design tokens from doc 08 §3.
+ *
+ * Every colour is a CSS variable set twice, light on :root and dark on .dark,
+ * so a component never names a hex value and dark mode is not a second set of
+ * classes. Dark mode is a real requirement: overnight checks happen at 2am in
+ * someone's bedroom.
+ *
+ * Status colours signal record state only. Vigilo has no normal ranges, so
+ * nothing here may be used to say a reading is good or bad.
+ */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --vigilo-primary: #0f6e6e;
+  --vigilo-primary-hover: #0b5757;
+  --vigilo-primary-subtle: #e3f2f1;
+  --vigilo-surface: #ffffff;
+  --vigilo-background: #f7f6f3;
+  --vigilo-border: #e2e0da;
+  --vigilo-text: #1c1b19;
+  --vigilo-text-secondary: #5b5852;
+  --vigilo-text-muted: #8a867e;
+
+  --vigilo-complete: #2e7d4f;
+  --vigilo-partial: #b8790b;
+  --vigilo-pending: #5b5852;
+  --vigilo-missed: #b3402f;
+  --vigilo-not-expected: #8a867e;
+  --vigilo-late: #7a4fb8;
+  --vigilo-syncing: #0f6e6e;
+}
+
+.dark {
+  --vigilo-primary: #4fc4c0;
+  --vigilo-primary-hover: #6fd4d0;
+  --vigilo-primary-subtle: #12312f;
+  --vigilo-surface: #1e1d1b;
+  --vigilo-background: #141311;
+  --vigilo-border: #33312d;
+  --vigilo-text: #f2f0eb;
+  --vigilo-text-secondary: #b0ada6;
+  --vigilo-text-muted: #8a867e;
+
+  --vigilo-complete: #5fbf87;
+  --vigilo-partial: #e0a83c;
+  --vigilo-pending: #b0ada6;
+  --vigilo-missed: #e8776a;
+  --vigilo-not-expected: #7a766f;
+  --vigilo-late: #b79be8;
+  --vigilo-syncing: #4fc4c0;
+}
+
+@theme inline {
+  --color-primary: var(--vigilo-primary);
+  --color-primary-hover: var(--vigilo-primary-hover);
+  --color-primary-subtle: var(--vigilo-primary-subtle);
+  --color-surface: var(--vigilo-surface);
+  --color-background: var(--vigilo-background);
+  --color-border-default: var(--vigilo-border);
+  --color-text: var(--vigilo-text);
+  --color-text-secondary: var(--vigilo-text-secondary);
+  --color-text-muted: var(--vigilo-text-muted);
+
+  --color-state-complete: var(--vigilo-complete);
+  --color-state-partial: var(--vigilo-partial);
+  --color-state-pending: var(--vigilo-pending);
+  --color-state-missed: var(--vigilo-missed);
+  --color-state-not-expected: var(--vigilo-not-expected);
+  --color-state-late: var(--vigilo-late);
+  --color-state-syncing: var(--vigilo-syncing);
+
+  --font-sans:
+    'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* Doc 08 §4. Body is 16px minimum on mobile, never below 14px anywhere. */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2rem;
+
+  --radius-card: 0.5rem;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--vigilo-background);
+    color: var(--vigilo-text);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  /* Numbers in a column of readings line up. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--vigilo-primary);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Doc 08 §6: cards 8px radius, 1px border, no drop shadows in light mode. */
+  .card {
+    background-color: var(--vigilo-surface);
+    border: 1px solid var(--vigilo-border);
+    border-radius: var(--radius-card);
+  }
+
+  /* 48px for primary actions, 44px minimum for anything tappable. */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 3rem;
+    padding-inline: 1.25rem;
+    border-radius: var(--radius-card);
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .btn-primary {
+    background-color: var(--vigilo-primary);
+    color: var(--vigilo-surface);
+  }
+
+  .btn-primary:hover {
+    background-color: var(--vigilo-primary-hover);
+  }
+
+  .dark .btn-primary {
+    color: var(--vigilo-background);
+  }
+
+  /* Destructive actions are outlined, never filled, so they are never the
+     easiest thing to hit. */
+  .btn-destructive {
+    border: 1px solid var(--vigilo-missed);
+    color: var(--vigilo-missed);
+    background-color: transparent;
+  }
+
+  /* 48px tall, 16px text so iOS does not zoom on focus. */
+  .field {
+    display: block;
+    width: 100%;
+    min-height: 3rem;
+    padding: 0.625rem 0.875rem;
+    font-size: 1rem;
+    background-color: var(--vigilo-surface);
+    border: 1px solid var(--vigilo-border);
+    border-radius: var(--radius-card);
+    color: var(--vigilo-text);
+  }
+
+  /* Label above the field, never placeholder-as-label. */
+  .field-label {
+    display: block;
+    margin-bottom: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--vigilo-text-secondary);
+  }
+}

@@ -4,8 +4,12 @@ Care records platform for a disability support team. Participant diaries and
 admin-defined observation checks, working offline. Ships as an installable PWA
 first, with native Android and iOS builds as the final phases.
 
-**Status: planning only. No code exists yet.** Start with Phase 0 in
-`docs/09-roadmap.md`.
+**Status: Phase 0 (foundations) done.** Monorepo, API with migrations and health
+endpoints, Vue shell with the design tokens, the three platform adapters, Docker
+Compose and CI all exist. There is no identity and no participant data yet.
+**Phase 1 (identity and access) is next**, in `docs/09-roadmap.md`. Do not skip
+ahead of it: retrofitting scope enforcement and encryption onto existing tables
+is far more expensive than building on them.
 
 ## Read before building
 
@@ -84,12 +88,17 @@ Vitest for unit and API tests, Playwright for E2E.
 ## Verifying
 
 ```bash
-docker compose up --build          # app on :8080, API docs at /api/docs
-docker compose run --rm api npm test
+cp .env.example .env
+docker compose up --build          # app on :8081, API under /api
+curl localhost:8081/api/ready      # database and migration state
+npm test                           # all three workspaces, needs a Postgres
 ```
 
-No Node needed locally, everything runs in Docker, same as the other projects on
-this box.
+Port 8081, not 8080: Partforge already holds 8080 on this box.
+
+The API tests need Postgres on `TEST_DATABASE_URL` (default
+`postgres://vigilo:vigilo@localhost:5432/vigilo_test`). CI provides one as a
+service container.
 
 ## Watch out for
 
