@@ -51,7 +51,7 @@ function yesNo(value: boolean): string {
 
     <section class="card p-4">
       <h2 class="text-lg font-semibold">Server</h2>
-      <dl class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <dl class="mt-3 grid grid-cols-1 gap-x-10 gap-y-2 sm:grid-cols-2">
         <div class="flex justify-between gap-4">
           <dt class="text-text-secondary">Reachable</dt>
           <dd data-testid="api-reachable">
@@ -92,7 +92,7 @@ function yesNo(value: boolean): string {
         Reported through the platform adapters. The same screen will read the same way on the native
         builds.
       </p>
-      <dl class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <dl class="mt-3 grid grid-cols-1 gap-x-10 gap-y-2 sm:grid-cols-2">
         <div class="flex justify-between gap-4">
           <dt class="text-text-secondary">Installed app</dt>
           <dd>{{ yesNo(capabilities.installed) }}</dd>
