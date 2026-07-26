@@ -6,6 +6,10 @@
  * about a rule, that rule belongs here (doc 02 §3).
  */
 
+export * from './access.js';
+export * from './auth.js';
 export * from './errors.js';
 export * from './health.js';
+export * from './password.js';
+export * from './roles.js';
 export * from './time.js';

@@ -1,22 +1,25 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 import { useSessionStore } from '@/stores/session';
 
-/**
- * Phase 0 has no identity. Users, roles, TOTP and the scope resolver are
- * Phase 1, so the guard below is wired and tested but not yet enforcing:
- * with nothing able to authenticate, enforcing it would leave an unreachable
- * shell and no way to see the app at all.
- *
- * Phase 1 flips this to true. Nothing else about the guard changes.
- */
-export const AUTH_ENFORCED = false;
-
 const routes: RouteRecordRaw[] = [
   {
     path: '/sign-in',
     name: 'sign-in',
     component: () => import('@/views/SignInView.vue'),
     meta: { requiresAuth: false, title: 'Sign in' },
+  },
+  {
+    path: '/set-password',
+    name: 'set-password',
+    component: () => import('@/views/SetPasswordView.vue'),
+    // Reachable while a requirement is outstanding: it is how you resolve one.
+    meta: { requiresAuth: true, allowPending: true, title: 'Change your password' },
+  },
+  {
+    path: '/set-up-two-factor',
+    name: 'set-up-two-factor',
+    component: () => import('@/views/TotpEnrolView.vue'),
+    meta: { requiresAuth: true, allowPending: true, title: 'Set up two-factor' },
   },
   {
     path: '/',
@@ -33,6 +36,12 @@ const routes: RouteRecordRaw[] = [
         name: 'participants',
         component: () => import('@/views/ParticipantsView.vue'),
         meta: { requiresAuth: true, title: 'Participants' },
+      },
+      {
+        path: 'users',
+        name: 'users',
+        component: () => import('@/views/UsersView.vue'),
+        meta: { requiresAuth: true, roles: ['admin'], title: 'People' },
       },
       {
         path: 'system',
@@ -56,12 +65,36 @@ export const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 });
 
-router.beforeEach((to) => {
+/**
+ * The guard mirrors what the API enforces. The server is the authority; this
+ * exists so a user is taken to the step they need rather than shown an error.
+ */
+router.beforeEach(async (to) => {
   const session = useSessionStore();
+  await session.ensureLoaded();
 
-  if (AUTH_ENFORCED && to.meta.requiresAuth && !session.isAuthenticated) {
+  if (!to.meta.requiresAuth) {
+    // A signed-in user has no reason to sit on the sign-in screen.
+    if (to.name === 'sign-in' && session.isAuthenticated) return { name: 'today' };
+    return true;
+  }
+
+  if (!session.isAuthenticated) {
     return { name: 'sign-in', query: { redirect: to.fullPath } };
   }
+
+  // An outstanding requirement wins over everything except the route that
+  // resolves it.
+  if (!to.meta.allowPending) {
+    if (session.pendingStep === 'password') return { name: 'set-password' };
+    if (session.pendingStep === 'totp') return { name: 'set-up-two-factor' };
+  }
+
+  const allowed = to.meta.roles as string[] | undefined;
+  if (allowed && session.principal && !allowed.includes(session.principal.role)) {
+    return { name: 'today' };
+  }
+
   return true;
 });
 

@@ -28,13 +28,23 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgres://${POSTGRES_USER:-vigilo}:${POSTGRES_PASSWORD:-vigilo}@db:5432/${POSTGRES_DB:-vigilo}
+      # Serving happens as vigilo_app, which has no UPDATE or DELETE on the
+      # audit log. Migrations and role provisioning run as the owner.
+      DATABASE_URL: postgres://${APP_DB_ROLE:-vigilo_app}:${APP_DB_PASSWORD:-vigilo_app_dev}@db:5432/${POSTGRES_DB:-vigilo}
+      MIGRATE_DATABASE_URL: postgres://${POSTGRES_USER:-vigilo}:${POSTGRES_PASSWORD:-vigilo}@db:5432/${POSTGRES_DB:-vigilo}
+      APP_DB_ROLE: ${APP_DB_ROLE:-vigilo_app}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-vigilo_app_dev}
+      # Wraps the per-table data keys. Generate with: openssl rand -base64 32
+      MASTER_KEY: '${MASTER_KEY:?set MASTER_KEY in .env, generate one with openssl rand -base64 32}'
       LOG_LEVEL: ${LOG_LEVEL:-info}
       BUILD_HASH: ${BUILD_HASH:-local}
       # https://localhost is the Capacitor origin. Allowed from the first
       # deploy so native sign-in does not fail silently later.
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,https://localhost}
       SESSION_SAMESITE: ${SESSION_SAMESITE:-lax}
+      # No TLS in front of the local stack, so the cookie cannot be Secure.
+      # Production terminates TLS and leaves this at true.
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     healthcheck:
       test:
         [

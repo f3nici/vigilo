@@ -1,28 +1,34 @@
 <script setup lang="ts">
-import { RouterLink, RouterView, useRoute } from 'vue-router';
+import { computed } from 'vue';
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
 import ThemeToggle from './ThemeToggle.vue';
 import VigiloMark from './VigiloMark.vue';
+import { useSessionStore } from '@/stores/session';
 
 const route = useRoute();
+const router = useRouter();
+const session = useSessionStore();
 
-const nav = [
-  { name: 'today', label: 'Today' },
-  { name: 'participants', label: 'Participants' },
-  { name: 'system', label: 'System' },
-] as const;
+const nav = computed(() => {
+  const items = [
+    { name: 'today', label: 'Today' },
+    { name: 'participants', label: 'Participants' },
+  ];
+  if (session.principal?.role === 'admin') items.push({ name: 'users', label: 'People' });
+  items.push({ name: 'system', label: 'System' });
+  return items;
+});
+
+async function signOut(): Promise<void> {
+  await session.signOut();
+  await router.push({ name: 'sign-in' });
+}
 </script>
 
 <template>
   <div class="min-h-dvh">
-    <p
-      class="bg-primary-subtle text-text-secondary border-border-default border-b px-4 py-2 text-sm"
-      role="status"
-    >
-      Phase 0 foundations. There is no sign-in yet, and no participant records exist.
-    </p>
-
     <header class="border-border-default bg-surface border-b">
-      <div class="mx-auto flex max-w-5xl items-center gap-4 px-4 py-3">
+      <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
         <RouterLink :to="{ name: 'today' }" class="text-primary flex items-center gap-2">
           <VigiloMark />
           <span class="text-text text-xl font-semibold tracking-tight">Vigilo</span>
@@ -41,6 +47,16 @@ const nav = [
           </RouterLink>
           <ThemeToggle />
         </nav>
+      </div>
+
+      <div
+        v-if="session.principal"
+        class="border-border-default text-text-secondary mx-auto flex max-w-5xl flex-wrap items-center gap-x-3 gap-y-1 px-4 pb-2 text-sm"
+      >
+        <span>{{ session.principal.displayName }}</span>
+        <span aria-hidden="true">·</span>
+        <span>{{ session.org?.name }}</span>
+        <button type="button" class="ml-auto min-h-11 underline" @click="signOut">Sign out</button>
       </div>
     </header>
 
