@@ -144,10 +144,9 @@ Push behaviour:
   move to `needs_user`, transient failures stay `pending`.
 - Retry with exponential backoff and jitter: 5s, 15s, 1m, 5m, 15m, then hourly.
   Cap at 24 hours, then surface it to the user.
-- Triggered on connectivity regained, on app foreground, on a timer, and from a
-  background task. Android uses WorkManager via the Capacitor background plugin,
-  iOS uses BGProcessingTask, which iOS schedules at its own discretion, so
-  background sync is a best-effort optimisation and never the only path.
+- Triggered on connectivity regained, on app foreground, on tab visibility, on a
+  timer, and from a background task where the platform has one. See §8.2: iOS
+  has none, so background sync is never the only path.
 - **Ordering matters within an entity.** Operations for the same `entity_id` are
   sent in `seq` order and the server applies them in the order received. Create
   before update is guaranteed by local sequence.
@@ -192,20 +191,67 @@ Separate queue, because photos are large and cannot block a 2 KB check entry.
 
 ## 8. Local database
 
-SQLite through `@capacitor-community/sqlite`, encrypted with SQLCipher. The key
-lives in the platform keystore, released by biometric or device passcode.
+**SQLite on both platforms, one schema, one set of queries.**
+
+| | PWA (v1) | Native (final phase) |
+| --- | --- | --- |
+| Engine | `@sqlite.org/sqlite-wasm` over OPFS | `@capacitor-community/sqlite` |
+| At-rest protection | Sensitive columns encrypted with WebCrypto AES-GCM, key from WebAuthn PRF or a PIN | SQLCipher whole-database encryption |
+| Durability | Good on Android. **iOS may evict after ~7 days unused** | Never evicted |
+| Access | Worker thread with OPFS SyncAccessHandle | Native thread |
+
+Choosing SQLite for the PWA rather than IndexedDB is what keeps this table short.
+The local schema, its migrations and every query are written once and reused
+verbatim when the native builds arrive. The cost is about 1 MB of WASM, cached by
+the service worker after first load.
 
 Local schema mirrors the server's shape but denormalised for read speed: a
 `window_view` table carrying the participant name, template name and status so
 the home screen is a single query.
 
 Wipe triggers: sign-out, account suspension detected, remote wipe flag on the
-device record, 30 consecutive days without a successful sync, and app
-uninstall (automatic). Wipe always attempts an outbox flush first.
+device record, 30 consecutive days without a successful sync, and uninstall or
+site-data clear (automatic). Wipe always attempts an outbox flush first.
+
+### 8.1 iOS storage eviction, the one real PWA weakness
+
+Safari can clear OPFS data after roughly 7 days without the PWA being opened.
+This is the structural cost of shipping PWA-first and it must be designed
+around, not noted and forgotten.
+
+- Call `navigator.storage.persist()` during the install flow. Installed PWAs on
+  iOS are usually granted it, which greatly reduces eviction risk, but it is a
+  request and not a guarantee.
+- **Sync aggressively.** Any connection at all triggers a push. The correct
+  outbox depth is zero, and the design should never rely on data sitting locally
+  for days.
+- Show outbox depth and age in the sync indicator, and warn at 24 hours.
+- On startup, detect an empty local database with a live session and treat it as
+  eviction: bootstrap fresh and log it, rather than presenting an empty screen
+  that looks like data loss.
+- Eviction destroys unsent outbox items and there is no recovery from it. That
+  is the honest limit of the PWA, and it is the strongest single argument for
+  eventually shipping the native builds.
+
+### 8.2 Background sync
+
+| Platform | Mechanism | Reliability |
+| --- | --- | --- |
+| Android PWA (Chrome) | Background Sync API and Periodic Background Sync | Good |
+| iOS PWA | None. Web Background Sync is unimplemented | Sync happens on next open only |
+| Desktop PWA | Background Sync | Good |
+| Native (later) | WorkManager, BGProcessingTask | Good on Android, best-effort on iOS |
+
+Because iOS has no background sync at all, **foreground sync is the primary
+path everywhere and background sync is only an optimisation.** Sync on: app
+open, tab visible, connectivity regained, a 5-minute timer while foregrounded,
+and immediately after any local write. Workers open the app every 2 hours by
+definition, which is what makes this acceptable.
 
 ## 9. Testing requirements
 
-Sync is not "tested by using the app". Required before the mobile app ships:
+Sync is not "tested by using the app". Required before the PWA ships, and run
+again unchanged against the native builds later:
 
 1. **Unit tests** for the window state machine, coverage resolution and
    completeness rules, run against the same `packages/shared` code the server
@@ -224,6 +270,18 @@ Sync is not "tested by using the app". Required before the mobile app ships:
    holds an unsent entry against the old one. Assert the confirmation flow.
 7. **Load test:** 300 devices pulling changes concurrently. Assert the
    `revision` indexes hold up.
+8. **PWA lifecycle tests**, specific to shipping in a browser:
+   - Service worker update while an entry is half-filled. Assert the update is
+     deferred and the in-progress entry survives.
+   - Hard refresh mid-push. Assert idempotency holds.
+   - OPFS eviction simulated by clearing storage with a live session. Assert the
+     app detects it, bootstraps, and reports it rather than showing an empty
+     screen.
+   - Two tabs open at once. Assert the OPFS worker serialises access and the
+     outbox is not double-sent.
+   - Run in a real installed PWA on Android and on iOS Safari 17, not only in a
+     desktop browser. Playwright covers the mechanics, actual devices catch the
+     platform behaviour.
 
 ## 10. Failure modes to design against
 
@@ -236,3 +294,6 @@ Sync is not "tested by using the app". Required before the mobile app ships:
 | Device holds data after access is revoked | Scope changes applied first in each page, and a revocation forces a sync attempt via a silent push |
 | Two workers on the same participant at once | Rare in practice (one person on site), handled by per-field merge |
 | Very long offline period | Windows are materialised 7 days ahead. Past 7 days the device records entries with `windowId: null` and the server binds them on arrival |
+| **iOS evicts OPFS with unsent entries queued** | `navigator.storage.persist()` at install, aggressive syncing so the queue is normally empty, visible outbox depth, 24-hour stale warning. Unrecoverable if it happens, and the main reason the native builds still matter |
+| Service worker serves a stale bundle after deploy | `index.html` and `sw.js` served `no-cache`, build hash sent with every request, `update_required` from the API forces a refresh |
+| Worker never installs the PWA and runs it in a tab | A tab has no reliable offline storage or push. Detect display mode, and if a worker signs in from a plain tab, prompt to install and explain what they lose without it |

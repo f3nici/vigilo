@@ -18,10 +18,17 @@ field.
 
 ## 2. Product summary
 
-Vigilo is a self-hosted care records system for one support organisation. It
-runs as a web app for office use and admin configuration, and as Android and
-iOS apps for staff in the field. The field apps work fully offline and sync
-when a connection returns.
+Vigilo is a self-hosted care records system for one support organisation.
+
+It ships as an **installable Progressive Web App**. Office staff use it in a
+browser for admin and configuration. Field staff install it to their phone's
+home screen, where it works fully offline and syncs when a connection returns.
+
+Native Android and iOS store builds come later, wrapping the same codebase with
+Capacitor. They are the last phase of the build, not the first. The PWA is a
+complete product on its own, and every field requirement below must be met by
+the PWA without the native apps existing. See §13 for what the native builds add
+and doc 09 for the sequencing.
 
 Vigilo does **not** track shifts, rosters, clock-in/out, timesheets or billing.
 
@@ -175,20 +182,71 @@ are immutable.
 
 ### 5.3 Schedules and windows
 
+**Windows sit on a fixed grid, and an admin sets that grid up per participant.**
+A schedule anchored at 06:00 with a 120-minute window produces 06:00-08:00,
+08:00-10:00, 10:00-12:00 and so on, every day, predictably. The grid does not
+roll forward from whenever the last check happened.
+
+This matters for two reasons. Staff can learn a participant's rhythm rather than
+recalculating it, and a fixed grid can be generated in advance, which is what
+makes offline recording possible at all. A rolling interval cannot be
+pre-generated, so a phone with no signal would not know what was due.
+
+#### What an admin configures
+
 Per participant, per template:
 
-- `window_minutes` (default 120).
-- An anchor time that windows are generated from, so windows land predictably
-  (e.g. anchored at 06:00 gives 06:00-08:00, 08:00-10:00 and so on).
-- Active from and optional active to dates.
+| Setting | Notes |
+| --- | --- |
+| Template | Which check form this schedule uses. Always resolves to the current published version at materialisation time |
+| Window length | Minutes. Default 120. Any value that divides evenly into 24 hours is preferred, and the UI warns if it does not |
+| Anchor time | Local time of day the grid starts from, e.g. 06:00 |
+| Applies on | Days of week. Default every day |
+| Applies between | Optional time-of-day range, for segmented schedules (below) |
+| Active from / to | Date range. `to` is optional |
+| Status | Active, paused or ended |
+
+#### Segmented schedules
+
+A participant can need different intervals at different times of day. High-acuity
+overnight care is the common case: 2-hourly through the day, 4-hourly overnight
+so the person is not woken more than necessary.
+
+This is expressed as **multiple schedule segments** on one participant, each with
+its own window length, anchor and applicable hours. For example:
+
+```
+Alice Smith · Vent observations
+  ├─ Segment 1   07:00-21:00   every day   window 120 min   anchor 07:00
+  └─ Segment 2   21:00-07:00   every day   window 240 min   anchor 21:00
+```
+
+The admin UI validates that segments do not overlap and warns about any
+uncovered part of the day. The gap is allowed, since coverage (§5.4) may
+legitimately account for it, but it must be a deliberate choice rather than an
+accident.
+
+A participant can also hold **several independent schedules** at once, for
+example 2-hourly vent observations plus a once-daily weight check. Those are
+separate schedules with separate templates, not segments.
+
+#### Changing a schedule
+
+- Changes apply to **future windows only** by default. Past windows keep the grid
+  they were recorded against, so history stays truthful.
+- The editor shows a preview of the first day's resulting windows before saving,
+  so an admin can see 06:00-08:00, 08:00-10:00 laid out rather than inferring it
+  from two numbers.
+- Changing a live schedule regenerates the remaining windows for today onward.
+  Any window that already holds an entry is preserved and never destroyed. If a
+  new grid would orphan an entry, the entry keeps its original window and the
+  change is flagged in the preview.
+- Every schedule change is audited with the before and after settings.
 
 Windows are materialised by a background job on a rolling horizon (generate
 forward 7 days, keep the past). Materialising rather than computing on the fly
 matters because windows carry state (complete, partial, missed, not expected)
 and because devices need to hold a concrete list offline.
-
-A participant can have more than one active schedule, for example 2-hourly vent
-observations plus a once-daily weight check.
 
 ### 5.4 Coverage: when checks are expected
 
@@ -343,8 +401,14 @@ All reports respect the requesting user's access scope.
 
 ## 9. Notifications
 
-Native push via FCM (Android) and APNs (iOS), delivered through the Capacitor
-push plugin.
+**Web Push** from the PWA's service worker, using VAPID. One implementation
+covers desktop browsers and Android. On iOS, Web Push works from iOS 16.4 but
+**only once the PWA has been added to the home screen**, so the install step is
+not optional for iOS staff who need overdue alerts. The install prompt explains
+this in those terms.
+
+The later native builds swap Web Push for FCM and APNs without changing any of
+the triggers or the payload rules below.
 
 Triggers in v1:
 - Check window closing soon, unrecorded.
@@ -366,11 +430,14 @@ invites.
 - **Two-factor (TOTP) is required for admin, team leader and nurse accounts, and
   optional for support workers.** Enrolment is in-app via QR code, with
   single-use recovery codes shown once at enrolment.
-- After first sign-in on a device, biometric unlock (Face ID, fingerprint)
-  reopens the app. Biometrics unlock a locally stored refresh token, they are
-  not an authentication factor by themselves.
-- Sessions expire after a configurable inactivity period (default 12 hours on
-  mobile, 1 hour on web).
+- After first sign-in on an installed PWA, unlock on reopen uses the platform
+  authenticator (WebAuthn, which surfaces as Face ID, Touch ID or fingerprint).
+  It releases a locally held refresh token, it is not an authentication factor by
+  itself. Where WebAuthn is unavailable, a device PIN set at install serves the
+  same purpose. The native builds later use the same flow through the Capacitor
+  biometric plugin.
+- Sessions expire after a configurable inactivity period (default 12 hours on an
+  installed PWA, 1 hour in a plain browser tab).
 - **Accounts are created by admins**, who set an initial password and hand it
   over directly. The user must change it at first sign-in.
 - **Password reset is an admin action.** There is no self-service reset, because
@@ -379,6 +446,45 @@ invites.
   time.
 - Admins can suspend an account instantly, which kills all its sessions and
   wipes the local database on that user's devices at next contact.
+
+### 10.1 Server-side recovery (break-glass)
+
+Because there is no email, an admin who loses both their password and their TOTP
+device cannot be recovered from inside the app. Vigilo therefore ships an
+**administrative CLI, run on the server host through Docker**, for exactly the
+situations the web UI cannot resolve.
+
+```bash
+docker compose exec api npm run admin -- <command>
+```
+
+| Command | Does |
+| --- | --- |
+| `admin:create` | Creates a new admin account and prints a one-time password |
+| `admin:reset-password` | Sets a one-time password for any account, forcing a change at next sign-in |
+| `admin:disable-totp` | Clears TOTP enrolment so the user can re-enrol |
+| `admin:unlock` | Clears a lockout and failed attempt count |
+| `admin:list` | Lists admin accounts and their status, so "is there another admin" is answerable |
+| `admin:revoke-sessions` | Kills every session and refresh token family for a user |
+| `audit:verify` | Verifies the audit hash chain |
+
+Rules, all enforced:
+
+- Running the CLI requires shell access to the host, which is the security
+  boundary. It is not exposed over HTTP, not reachable from the app, and has no
+  network listener of its own.
+- **Every command writes to the audit log** with actor `system:cli`, the OS user
+  who ran it, the command and the target account. Break-glass that leaves no
+  trace is not break-glass, it is a backdoor.
+- One-time passwords are printed once to the terminal, never stored in plaintext,
+  never logged.
+- The CLI cannot read, decrypt or export participant data. It only touches
+  accounts, sessions and the audit chain. This keeps it useless to an attacker
+  looking for records rather than access.
+- It refuses to run against a database whose migrations are out of date.
+
+This path is documented in the runbook, and the organisation should rehearse it
+once before production, not first attempt it during a lockout.
 
 ## 11. Non-functional requirements
 
@@ -393,7 +499,8 @@ invites.
 | Timezone | One org-wide timezone, set in admin settings, changeable. All timestamps stored UTC. |
 | Retention | 7 years minimum for participant records (NDIS), then archival, never silent deletion. |
 | Browsers | Current Chrome, Edge, Firefox and Safari. No IE, no legacy Edge. |
-| Devices | Android 9 and above, iOS 15 and above. |
+| PWA baseline | **Android: Chrome 108+. iOS: Safari 17+**, which is the floor for reliable OPFS storage and Web Push from an installed PWA. Desktop: any current Chromium browser or Safari 17+. A browser below the floor gets a clear "install the app or update your browser" screen rather than a subtly broken offline mode |
+| Installability | Passes Lighthouse PWA criteria: web app manifest, icons, service worker, offline start URL, HTTPS |
 | Language | English (Australian) only in v1. Strings externalised so translation is possible later. |
 
 ## 12. Explicitly out of scope
@@ -411,3 +518,60 @@ Recorded so a future build session does not add them speculatively:
 - Family or next-of-kin logins. Participants get self-access, families do not.
 - Houses, sites or location grouping.
 - Integrations with other systems (calendar, accounting, MyGov, PRODA).
+
+## 13. PWA now, native apps later
+
+The PWA is the delivery vehicle for v1 and must stand alone. Native Android and
+iOS builds are the **final phase** of the build, wrapping the same code with
+Capacitor.
+
+### What the PWA delivers
+
+Everything in this document. Installable to the home screen, offline check and
+diary recording, local encrypted storage, Web Push for overdue alerts, camera
+capture for photos, biometric unlock via WebAuthn, background sync where the
+platform allows it.
+
+### What the native builds add
+
+| Capability | PWA | Native |
+| --- | --- | --- |
+| Store presence and discoverability | none | App Store and Play Store listings |
+| Install | "Add to home screen", needs explaining to staff | Familiar store install |
+| Push on iOS | Works from iOS 16.4, but only after home-screen install | Works immediately |
+| Background sync | Android good, iOS unreliable and heavily throttled | Scheduled background tasks on both |
+| Storage durability | OPFS, which iOS can evict after roughly 7 days of no use | Native SQLite, never evicted |
+| Biometrics | WebAuthn platform authenticator | Native biometric APIs |
+| Managed deployment | none | Possible via MDM later |
+
+### Why this order
+
+Three reasons, all practical:
+
+1. **iOS has no build path today.** No Mac, no Apple Developer account, no
+   signing setup. Putting native last means that gap blocks the last phase
+   instead of the whole project.
+2. **Store review is a slow gate at the wrong end.** A health-adjacent app needs
+   privacy declarations, a demo account and an account deletion answer. None of
+   that should sit between the team and a working product.
+3. **The hard part is shared anyway.** Offline sync, the local database and the
+   dynamic form renderer all get built for the PWA and are then reused unchanged.
+   Capacitor swaps the storage and push adapters behind an interface, it does not
+   rewrite the app.
+
+### What this costs
+
+Two things need designing around, not ignoring:
+
+- **iOS storage eviction.** Safari can clear OPFS data after about 7 days without
+  the PWA being opened. For a worker using it daily this never fires, but a
+  casual user could lose queued entries. Mitigations in doc 05: aggressive sync
+  whenever any connection exists, `navigator.storage.persist()` requested at
+  install, a visible queue indicator, and a warning if the outbox is stale.
+- **iOS background sync is unreliable.** Queued entries upload when the app is
+  next opened rather than on a schedule. Acceptable because workers open the app
+  every 2 hours by definition, but it means background sync is never the only
+  path to getting data off a device.
+
+The platform abstraction in `packages/app/src/platform` exists from Phase 0 so
+this swap is a configuration change late, not a refactor.

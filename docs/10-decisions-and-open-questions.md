@@ -3,7 +3,8 @@
 ## 1. Locked decisions
 
 Confirmed by the owner during planning on 2026-07-26. Do not revisit without an
-explicit instruction.
+explicit instruction. D34 to D36 were added later the same day and supersede the
+parts of D5, D6 and D28 they touch.
 
 | # | Decision | Notes |
 | --- | --- | --- |
@@ -11,8 +12,8 @@ explicit instruction.
 | D2 | Single organisation, self-hosted. Not multi-tenant | |
 | D3 | Scale target 20 to 200 participants, 30 to 300 staff | Drives Postgres over SQLite |
 | D4 | Cloud VPS the owner manages, Australian region | |
-| D5 | Capacitor for Android and iOS, one web codebase | Proven on this machine with carelane-android |
-| D6 | Public App Store and Play Store release | Not internal distribution |
+| D5 | Capacitor for Android and iOS, one web codebase | Proven on this machine with carelane-android. **Superseded in ordering by D34: native builds come last** |
+| D6 | Public App Store and Play Store release | Not internal distribution. Still the goal, now the final phases |
 | D7 | Full offline capture and sync | Non-negotiable, workers are in homes with poor signal |
 | D8 | Custom append-only sync, no PowerSync or similar | Rationale in doc 05 §2 |
 | D9 | Vue 3 + TypeScript + Vite + Tailwind, Node + TS API, Postgres + Drizzle | Rationale in doc 02 §2 |
@@ -40,6 +41,9 @@ explicit instruction.
 | D31 | Attachments encrypted on the VPS disk, behind a storage interface | Object storage later without schema change |
 | D32 | **No transactional email.** Admins issue credentials and reset passwords directly | |
 | D33 | Product name is Vigilo | Subject to the availability checks in doc 08 §1 |
+| D34 | **Ship as an installable PWA first. Native Android and iOS come last** (phases 11 and 12) | The PWA is a complete product on its own: offline recording, local SQLite over OPFS, Web Push, WebAuthn unlock. Native adds store presence, storage iOS cannot evict, and reliable background sync. Doc 01 §13 |
+| D35 | **Local storage is SQLite on both platforms**: SQLite-WASM over OPFS in the PWA, Capacitor SQLite natively. Not IndexedDB | One local schema, one set of queries, written once and reused when the native builds arrive. Costs about 1 MB of WASM |
+| D36 | **Break-glass admin recovery is a CLI in the API container**, run over `docker compose exec`, audited on every invocation, with no HTTP surface and no access to participant data | The only account recovery path that can exist without email. Resolves the sole-locked-out-admin risk. Doc 01 §10.1, doc 02 §9, doc 07 §3 |
 
 ## 2. Assumptions made while writing these documents
 
@@ -53,7 +57,7 @@ before Phase 1.**
 | A2 | Team leaders and nurses have a scoped participant list, not global access | Otherwise the role is identical to admin | Small schema change (`team_scopes`) |
 | A3 | Nurses can author care plans and templates but not manage users | Clinical authority without administrative authority | Permission matrix change |
 | A4 | A participant can have several concurrent check schedules | e.g. 2-hourly vent obs plus daily weight | Removing this simplifies the model |
-| A5 | Windows are generated on a fixed grid from an anchor time, not rolling from the last entry | "2 hour window" reads as a fixed window, and rolling windows cannot be materialised in advance for offline use | Significant redesign of the window model. **Confirm this one first** |
+| ~~A5~~ | ~~Windows are generated on a fixed grid from an anchor time~~ | **Confirmed by the owner 2026-07-26. Now a locked decision.** Fixed grid, and an admin configures it per participant with a live preview of the resulting window times. Segmented schedules cover different intervals by time of day. Doc 01 §5.3, doc 03 §5, doc 06 §5 | n/a |
 | A6 | Late back-fill is allowed up to 24 hours, then needs a team leader | Prevents indefinite retrospective record creation | Config value |
 | A7 | View events are audit-logged, batched to one row per user per participant per 15 minutes | Full per-request view logging would dwarf the clinical data | Config value |
 | A8 | Numeric check values stay unencrypted so trends and compliance are plain SQL | Doc 03 §6 Option A | Option B needs a reporting table and a refresh job |
@@ -63,7 +67,12 @@ before Phase 1.**
 | A12 | Attachments are capped at 20 MB, images and PDF only | | Config |
 | A13 | Australian English, single language | | Strings are externalised regardless |
 | A14 | One participant is supported by one worker at a time on site | Underpins the low-conflict sync design | Sync conflict handling would need more thought |
-| A15 | Push notification payloads carry an initial and surname at most, no clinical content | FCM and APNs are US-operated and the payload leaves Australia | |
+| A15 | Push notification payloads carry an initial and surname at most, no clinical content | Push relays are overseas. Web Push payloads are end-to-end encrypted, FCM and APNs payloads are not | |
+| A16 | Field staff will install the PWA to their home screen, and will be shown how | Without installing there is no reliable offline storage and no push on iOS. Onboarding needs a short printed guide | If staff will not install, the native phases move up the roadmap and become urgent rather than optional |
+| A17 | Staff phones run Android with Chrome 108+ or iOS with Safari 17+ | The floor for OPFS and installed-PWA Web Push | Older devices need the native build, or lose offline mode |
+| A18 | A worker on a plain browser tab is an office-use case, not a field one | Tabs get no local database and a shorter session | |
+| A19 | Losing an outbox to iOS storage eviction is an acceptable v1 risk | Mitigated by aggressive syncing, persisted-storage requests and a visible queue, and eliminated by the native build later | If unacceptable, phase 12 becomes a blocker for iOS staff rather than an improvement |
+| A20 | The admin CLI is run by the owner over SSH, not by organisation staff | Shell access is the security boundary | If care staff need to run it, it needs a different design |
 
 ## 3. Open questions
 
@@ -80,29 +89,31 @@ branded until this is settled.
 Victoria's Health Records Act 2001 and NSW's HRIPA 2002 impose different duties
 on top of the Privacy Act. Doc 07 covers the federal baseline only.
 
-**Q3. Who is the second admin?**
-With no email, a sole admin who loses their password and TOTP device locks the
-organisation out of its own records. Doc 07 §3 requires at least two admin
-accounts plus a documented CLI break-glass. Confirm this is acceptable
-operationally.
+**Q3. Who is the second admin, and who holds server shell access?** *(partly
+resolved)*
+Recovery is now a CLI run on the host over `docker compose exec` (D36), so a
+locked-out admin is fixable. Two things still need answering: whether there will
+be at least two admin accounts so day-to-day lockouts do not need the server at
+all, and **who besides the owner can SSH to the VPS**. Shell access is now the
+recovery path, which makes it a single point of failure if only one person has
+it and a security concern if too many do.
 
 ### Before Phase 3
 
-**Q4. Confirm assumption A5, the window grid model.**
-Fixed grid anchored at a time of day ("06:00-08:00, 08:00-10:00") versus rolling
-from the last recorded check ("due 2 hours after the last one"). Documents assume
-fixed. Rolling windows cannot be pre-generated, which breaks offline recording,
-so if rolling is genuinely required the offline design needs rework.
+**~~Q4. Confirm the window grid model.~~** *Resolved 2026-07-26.* Fixed grid,
+admin-configured per participant, with segments for different intervals by time
+of day and a live preview of the resulting window times before saving. See D34
+and doc 01 §5.3.
 
 **Q5. What happens to a window that spans a coverage boundary?**
 A 2-hour window from 18:00 with coverage ending at 19:00. Is it expected,
 not expected, or expected with a shorter effective window? Suggested default:
 expected if any part of the window is covered.
 
-**Q6. Can two schedules for the same participant use the same template?**
-For example 2-hourly during the day and 4-hourly overnight, same fields. If yes,
-schedules need day-of-week and time-of-day applicability, not just active dates.
-This is a real scenario in high-acuity care and is worth deciding early.
+**~~Q6. Different intervals at different times of day?~~** *Resolved 2026-07-26
+by the segmented schedule model.* One schedule holds several segments, each with
+its own window length, anchor and applicable hours and weekdays. 2-hourly by day
+and 4-hourly overnight is a two-segment schedule. Doc 03 §5.
 
 **Q7. Real examples of the actual check forms.**
 The documents use urine output and ventilator mode as stand-ins. Two or three
@@ -118,23 +129,37 @@ Drives local database size and bootstrap cost. Documents assume a handful.
 **Q9. Do staff use personal or organisation-owned phones?**
 Personal devices change the security posture: no mobile device management, no
 enforced OS updates, and a lost phone is outside organisational control. It also
-affects what is reasonable to ask (biometrics, forced updates).
+affects what is reasonable to ask (biometrics, forced updates). It matters more
+under PWA-first, because PWA local storage is protected by column encryption
+rather than whole-database SQLCipher (doc 07 §2).
 
-### Before Phase 10
+**Q15. What phones do staff actually carry?**
+Specifically, how many are on iOS below Safari 17 or Android below Chrome 108.
+Anyone below the floor cannot use the PWA offline and needs the native build,
+which would change the roadmap priority. Worth a quick survey before Phase 5.
+
+**Q16. Will staff reliably install the PWA to their home screen?**
+The whole field experience depends on it, and iOS has no install prompt API, only
+Share-menu instructions. If the organisation thinks this will not stick, the
+native phases move from optional to necessary. Consider testing the install flow
+with two or three actual workers before committing to the sequencing.
+
+### Before Phases 11 and 12 (native)
 
 **Q10. How does iOS get built and signed?**
-There is currently no Mac and no plan. This blocks the App Store entirely. The
-realistic options: GitHub Actions macOS runners (works, fiddly signing setup,
-free minutes on public repos and paid on private), a cloud Mac service, or buying
-a Mac Mini. An Apple Developer Program membership (about 150 AUD a year) is
-needed either way. **This is the single biggest gap between the stated goal
-(iOS app) and current capability.**
+There is currently no Mac and no plan. The realistic options: GitHub Actions
+macOS runners (works, fiddly signing setup, free minutes on public repos and paid
+on private), a cloud Mac service, or buying a Mac Mini. An Apple Developer
+Program membership (about 150 AUD a year) is needed either way. **PWA-first
+removes this from the critical path**, since iOS staff get a working installed
+app with push in Phase 5, but it still blocks store presence and durable
+storage on iOS.
 
 **Q11. Account deletion for App Store guideline 5.1.1(v).**
 Apple requires an in-app path to request account deletion. Vigilo accounts are
 admin-issued and clinical records are retained for 7 years, which is a legitimate
 exception but must be presented correctly. Decide the wording and the in-app flow
-before submission, since this is a common rejection.
+before submission, since this is a common rejection. Not relevant to the PWA.
 
 ### Before production
 
@@ -164,3 +189,6 @@ Recorded so they are not re-proposed:
 - PowerSync, ElectricSQL, RxDB and other general sync engines.
 - React and React Native.
 - Server-side SQLite.
+- IndexedDB or Dexie as the local store, in favour of SQLite on both platforms.
+- Native apps first. They are the final phases, not the starting point.
+- Any HTTP endpoint for break-glass account recovery. It is a host CLI only.

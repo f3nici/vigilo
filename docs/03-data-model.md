@@ -197,19 +197,64 @@ key is a new field.
 ## 5. Schedules, coverage and windows
 
 ### check_schedules
+The admin-configured rule. One row per participant per template.
+
 | Column | Type | Notes |
 | --- | --- | --- |
 | id | uuid PK | |
 | participant_id | uuid FK | |
 | template_id | uuid FK | resolved to the current published version when a window is created |
-| window_minutes | integer | default 120 |
-| anchor_time | time | local time the window grid starts from, e.g. 06:00 |
+| name | text | shown to staff, e.g. "Vent observations" |
 | active_from | date | |
 | active_to | date NULL | |
 | status | enum | `active`, `paused`, `ended` |
 | created_by, created_at, updated_at, revision | | |
 
-A participant can hold several active schedules at once.
+A participant can hold several active schedules at once, for example 2-hourly
+vent observations plus a once-daily weight check.
+
+### check_schedule_segments
+The grid itself. **This is what an admin sets up**, and a schedule needs at least
+one segment.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| id | uuid PK | |
+| schedule_id | uuid FK | |
+| window_minutes | integer | default 120 |
+| anchor_time | time | local time the grid starts from, e.g. 06:00 |
+| applies_from_time | time | start of the part of the day this segment governs |
+| applies_to_time | time | end. May be less than `applies_from_time`, meaning it crosses midnight |
+| weekdays | smallint[] | days this segment applies. `NULL` means every day |
+| sort_order | smallint | |
+| created_at, updated_at, revision | | |
+
+One segment with `00:00` to `24:00` and no weekday filter is the simple case: a
+flat 2-hourly grid all day, every day. Several segments express different
+intervals at different times, which is the common high-acuity pattern:
+
+```
+schedule "Vent observations" for Alice Smith
+  segment 1: 07:00 → 21:00, every day, window 120, anchor 07:00
+  segment 2: 21:00 → 07:00, every day, window 240, anchor 21:00
+```
+
+Rules enforced on save, in `packages/shared` so the API and the admin UI agree:
+
+- Segments within one schedule must not overlap in time on the same weekday.
+- Gaps are allowed but warned about, since coverage may legitimately account for
+  them.
+- `window_minutes` should divide evenly into the segment's span. If it does not,
+  the final window of the segment is short, and the UI says so rather than
+  silently truncating.
+- Anchor time must fall on or before `applies_from_time` for the grid to line up
+  predictably.
+- Changing a segment regenerates future windows only. Windows that already hold
+  an entry are never destroyed (see doc 01 §5.3).
+
+The materialiser walks each active segment for each day in the horizon, lays down
+the grid from `anchor_time` at `window_minutes` intervals, clips to the segment's
+applicable hours, and then applies coverage to set `expected`.
 
 ### coverage_patterns
 Baseline supported hours.
@@ -231,6 +276,7 @@ The materialised grid. This is the busiest table.
 | id | uuid PK | |
 | participant_id | uuid FK | |
 | schedule_id | uuid FK | |
+| segment_id | uuid FK | which grid rule produced it, kept so history survives a schedule change |
 | template_version_id | uuid FK | frozen at materialisation |
 | starts_at, ends_at | timestamptz | |
 | expected | boolean | false when coverage says nobody from the team is there |
@@ -491,11 +537,19 @@ Devices walk both tables with the same `revision` cursor as everything else.
   participants.
 - **Key rotation** must be possible without downtime: keys are versioned, the
   ciphertext carries its key version, and a background job re-encrypts.
-- **Local device database is encrypted too**, via SQLCipher with a key held in
-  the platform keystore and released by biometric or passcode unlock. A stolen,
-  unlocked phone is the realistic threat, not a stolen database file, so also
-  wipe the local DB on suspension, on sign-out, and after a long period with no
-  successful sync (default 30 days).
+- **The local database is protected on both platforms, by different means.**
+  - *Native (final phase):* SQLCipher with the key in the platform keystore,
+    released by biometric unlock.
+  - *PWA (v1):* OPFS is origin-scoped and unreadable by other sites, but it is
+    not encrypted on disk. So Vigilo encrypts the sensitive columns inside the
+    local database with WebCrypto AES-GCM, using a key wrapped by a WebAuthn
+    PRF-derived secret (or a PIN-derived key where PRF is unavailable), held in
+    memory for the session. Names, diary bodies and free-text values are
+    encrypted locally. Timestamps, statuses and numeric values are not, matching
+    the server-side trade-off in §6.
+  - Either way, the realistic threat is an unlocked, stolen phone rather than a
+    stolen file, so also wipe the local database on suspension, on sign-out, and
+    after a long period with no successful sync (default 30 days).
 
 ## 13. Indexing summary
 

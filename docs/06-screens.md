@@ -29,8 +29,43 @@ footer on web.
 | Sign in | Email, password, org logo. Error messages never reveal whether an account exists |
 | TOTP challenge | 6-digit code, "use a recovery code instead" link |
 | Force password change | Shown when `must_change_password`, cannot be skipped |
-| Biometric unlock | App reopen on native. Falls back to password. "Use password instead" always available |
+| Biometric unlock | App reopen. WebAuthn platform authenticator on the PWA, biometric plugin on native. Falls back to password. "Use password instead" always available |
 | TOTP enrolment | QR code, manual key, verification, then recovery codes shown once with an explicit "I have saved these" confirmation |
+
+## 2.1 Install (PWA)
+
+Shown to a field user signing in from a plain browser tab. Not a dismissible
+nag: without installing, they have no reliable offline storage and no push
+notifications on iOS, which means the app cannot do its job.
+
+```
+┌──────────────────────────────────────────┐
+│              ◍  Vigilo                   │
+│                                          │
+│  Add Vigilo to your home screen          │
+│                                          │
+│  You need to install it to:              │
+│   ·  Record checks with no signal        │
+│   ·  Get reminders when a check is due   │
+│   ·  Open it without signing in again    │
+│                                          │
+│  On iPhone:                              │
+│   1. Tap  ⬆︎  Share                       │
+│   2. Tap  Add to Home Screen             │
+│   3. Open Vigilo from your home screen   │
+│                                          │
+│         [ Show me ]   [ Not now ]        │
+└──────────────────────────────────────────┘
+```
+
+- Android and desktop Chromium use `beforeinstallprompt` for a one-tap install.
+- iOS has no install API, so it gets illustrated Share-menu instructions. This is
+  the single roughest edge of PWA-first and is worth doing properly, including a
+  short printable guide for onboarding new staff.
+- After install, request `navigator.storage.persist()` and offer WebAuthn unlock
+  setup in the same flow.
+- Admins working at a desk can dismiss this permanently. Workers get it again at
+  next sign-in until they install.
 
 ## 3. Today (worker home)
 
@@ -180,7 +215,7 @@ version, and a version history for nurses and admins.
 | Assignments | Assign workers, grant temporary access with expiry and reason, see and revoke active grants |
 | Check templates | List, versions, and the field builder |
 | Field builder | Drag-to-reorder field list, per-field type, label, key, unit, options, required, help text. Live preview of the rendered form beside the editor. Publish action with a diff against the previous version |
-| Schedules | Per participant: template, window length, anchor time, active dates |
+| Schedules | Per participant: template, segments with window length and anchor time, active dates. See the detail below |
 | Coverage | Weekly grid editor for supported hours, plus a list of dated exceptions. Recalculate action with a preview of what would change |
 | Diary categories | Label, colour, order, active |
 | Missed reason codes | Code, label, requires-note flag, order |
@@ -201,6 +236,54 @@ so it deserves care:
   existing records keep the old version.
 - Keys are auto-generated from labels but editable before first publish, then
   locked forever.
+
+### Schedule editor detail
+
+This is where an admin sets up the check grid, so it has to make the resulting
+windows obvious rather than something to be inferred from two numbers.
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│ Alice Smith  ·  Schedule: Vent observations                    │
+│ Template: 2-hourly vent obs (v3)          Active from 01/07/26 │
+├────────────────────────────────────────────────────────────────┤
+│ SEGMENTS                                        [ + Add ]      │
+│ ┌────────────────────────────────────────────────────────────┐ │
+│ │ Daytime      07:00 → 21:00   Every day                     │ │
+│ │ Every 2 hours, starting 07:00                       [edit] │ │
+│ ├────────────────────────────────────────────────────────────┤ │
+│ │ Overnight    21:00 → 07:00   Every day                     │ │
+│ │ Every 4 hours, starting 21:00                       [edit] │ │
+│ └────────────────────────────────────────────────────────────┘ │
+├────────────────────────────────────────────────────────────────┤
+│ PREVIEW · Monday 27 July                                       │
+│  07:00─09:00  09:00─11:00  11:00─13:00  13:00─15:00            │
+│  15:00─17:00  17:00─19:00  19:00─21:00                         │
+│  21:00─01:00  01:00─05:00  05:00─07:00                         │
+│                                                                │
+│  ⓘ 10 windows a day. 3 fall outside supported hours and will   │
+│    show as not expected (Sun, and weekdays after 19:00).       │
+├────────────────────────────────────────────────────────────────┤
+│                              [ Cancel ]  [ Save schedule ]     │
+└────────────────────────────────────────────────────────────────┘
+```
+
+Rules for this screen:
+
+- **The preview is not optional and updates live.** An admin sets a window length
+  and an anchor and immediately sees the actual clock times that result.
+- The preview overlays coverage, so windows that will land outside supported
+  hours are shown greyed with the reason. Setting up a schedule and setting up
+  coverage are separate jobs, and this is where they visibly meet.
+- Warnings, not blocks, for a gap between segments, an uneven division (a 10pm to
+  7am span on a 4-hour window leaves a 1-hour tail), or an anchor that does not
+  line up with the segment start.
+- Overlapping segments are a hard error and cannot be saved.
+- Saving a live schedule shows what changes: how many future windows are
+  regenerated, and explicitly that past windows and anything already holding an
+  entry are untouched.
+- A simple case stays simple. One segment, all day, every day, two fields to
+  fill in. Segments only appear as a concept when an admin adds a second one.
 
 ## 6. Participant self-access
 
@@ -230,3 +313,8 @@ performance rather than the participant's care.
   high-contrast mode. Staff use this in dim rooms, sometimes with gloves.
 - **No infinite scroll on clinical history.** Explicit date ranges, so a person
   can state what period they looked at.
+- **Never interrupt an entry in progress.** A service worker update, a session
+  warning or an install prompt waits until the current form is saved. Losing
+  half-typed observations to a UI event is the fastest way to lose staff trust.
+- **The app looks the same installed or in a tab**, but a tab shows a persistent
+  "not installed, records may not be saved offline" strip for field roles.

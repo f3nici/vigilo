@@ -43,11 +43,25 @@ encrypted per file with a data key wrapped by the master key. Files are streamed
 through the API with a scope check on every request, never served statically by
 nginx.
 
-**At rest, device.** The local SQLite database is SQLCipher-encrypted. The key
-lives in the iOS Keychain or Android Keystore, released by biometric or device
-passcode. The realistic threat is an unlocked, stolen phone, so also: short
-inactivity lock, remote wipe on suspension, and automatic wipe after 30 days
-without a successful sync.
+**At rest, device.** Different mechanisms per platform, same intent.
+
+- *PWA (v1):* OPFS is origin-scoped, so no other site can read it, but it is not
+  encrypted on disk. Vigilo therefore encrypts sensitive columns inside the local
+  database with WebCrypto AES-GCM. The key is wrapped by a WebAuthn PRF-derived
+  secret, or a PIN-derived key (PBKDF2, high iteration count) where PRF is
+  unavailable, and held in memory for the session only.
+- *Native (final phase):* SQLCipher whole-database encryption with the key in the
+  iOS Keychain or Android Keystore.
+
+Be honest about the difference: **an attacker with a rooted or jailbroken device
+and physical access can reach PWA local storage more easily than native
+storage.** For an app used on staff phones this is an acceptable v1 risk, given
+the mitigations below, and it is one of the reasons the native builds still
+belong on the roadmap.
+
+Either way: short inactivity lock, remote wipe on suspension, automatic wipe
+after 30 days without a successful sync, and a local retention window of 30 days
+so a compromised device yields a month of records rather than years.
 
 **Key management.** Keys are versioned and the ciphertext records its key
 version, so rotation is a background re-encryption job rather than an outage. The
@@ -89,11 +103,34 @@ it has consequences that must be handled rather than discovered:
 - **Password reset is an admin action.** The admin generates a one-time password
   shown once in the UI and hands it over directly. `must_change_password` forces
   a change at first use.
-- **A locked-out admin is a real risk.** If the only admin loses their password
-  and TOTP device, nobody can reset it through the app. Mitigations: require at
-  least two admin accounts, require recovery codes to be stored physically, and
-  ship a documented CLI break-glass command that runs on the server host and
-  writes to the audit log.
+- **A locked-out admin is recovered from the server command line.** If the only
+  admin loses their password and TOTP device, nobody can fix it through the app,
+  so Vigilo ships a break-glass CLI in the API container:
+
+  ```bash
+  docker compose exec api npm run admin -- admin:reset-password --email jo@example.org
+  docker compose exec api npm run admin -- admin:disable-totp --email jo@example.org
+  ```
+
+  Security properties, all required (full list in doc 01 §10.1):
+
+  - **Shell access to the host is the security boundary.** No HTTP endpoint, no
+    listener, no remote invocation. Whoever can `docker compose exec` can already
+    read the database, so this grants no new capability, it just makes a
+    legitimate operation possible without hand-editing rows.
+  - **Every invocation writes to the audit log** with actor `system:cli`, the OS
+    user, the command and the target account. It cannot suppress its own entry.
+    A silent recovery tool is a backdoor.
+  - **It cannot read, decrypt or export participant data.** Accounts, sessions
+    and the audit chain only. An attacker who reaches it gains access, not
+    records, and leaves a trail either way.
+  - One-time passwords print once to stdout, are never persisted and never
+    logged. `--confirm` is required for destructive commands.
+  - Host access is therefore the thing to protect: SSH keys only, no password
+    auth, no shared accounts, and a record of who holds access.
+
+  Still keep at least two admin accounts and store recovery codes physically. The
+  CLI is the last resort, not the routine path.
 - **Nothing sensitive travels by email**, which is a genuine security benefit and
   worth stating explicitly in any privacy assessment.
 
@@ -122,9 +159,15 @@ names.
 - Host in an Australian region. Backups stay in Australia. No third-party
   processor outside Australia, which is straightforward here since there is no
   email provider, no AI service and no error-reporting SaaS.
-- Push notifications are the one exception. FCM and APNs are US-operated, so
-  **notification payloads carry no clinical content and no participant surname.**
-  "Check due for A. Smith" is the ceiling. Document this in the privacy policy.
+- Push notifications are the one exception, and the PWA-first choice improves
+  this. **Web Push with self-hosted VAPID** goes through the browser vendor's
+  push service (Google, Mozilla or Apple) but the **payload is end-to-end
+  encrypted to the subscriber's keys**, so the relay sees ciphertext and routing
+  metadata, not content. The later native builds move to FCM and APNs, where the
+  payload is visible to the provider. Either way the rule stands: **no clinical
+  content and no participant surname in a notification.** "Check due for A.
+  Smith" is the ceiling, both because it lands on a lock screen and because it
+  crosses a border. Document it in the privacy policy.
 - Retention: 7 years from the last service date, configurable. After that,
   records are flagged for archival and require an explicit admin action.
   **Nothing is ever deleted silently by a job.**
@@ -149,7 +192,10 @@ names.
 
 | Threat | Mitigation |
 | --- | --- |
-| Lost or stolen phone | Encrypted local DB, biometric lock, short inactivity timeout, remote wipe, 30-day no-sync auto-wipe |
+| Lost or stolen phone | Encrypted local DB, biometric lock, short inactivity timeout, remote wipe, 30-day no-sync auto-wipe, 30-day local retention window |
+| Rooted or jailbroken device reading PWA local storage | Column-level encryption inside the local DB with an in-memory key, short local retention. Weaker than native SQLCipher, and an accepted v1 trade-off (see §2) |
+| Host shell access abused via the admin CLI | Whoever has shell already has the database, so the CLI adds no capability. It is audit-logged on every invocation and cannot read participant data. Protect host access: SSH keys only, no shared accounts, a record of who holds access |
+| Malicious service worker or cached bundle | HTTPS only, `sw.js` served `no-cache`, strict CSP, subresource integrity on the built assets, build hash checked by the API |
 | Departing staff member retaining access | Instant suspension kills sessions and flags the device for wipe. Assignments audited. Temporary grants expire on their own |
 | Curious staff browsing records they have no reason to see | Scope enforcement plus view auditing plus a per-participant access report |
 | VPS compromise | Field encryption limits what a database dump yields, but an attacker with the app process has the keys. Reduce blast radius: minimal container, no shell in the image, keys from the environment, host firewalled, SSH keys only, unattended security updates |
@@ -163,8 +209,14 @@ names.
 
 ## 8. App store requirements
 
-Both stores treat health-adjacent apps more strictly, and both need work that is
-easy to leave too late.
+**These apply to the final native phase only.** The PWA has no store review, no
+privacy nutrition labels and no account deletion requirement, which is a real
+advantage of shipping it first: a working product reaches staff without waiting
+on Apple.
+
+Recorded here so the native phase is planned with its true cost. Both stores
+treat health-adjacent apps more strictly, and both need work that is easy to
+leave too late.
 
 **Apple:**
 - Privacy nutrition labels declaring health data collection.
@@ -197,8 +249,12 @@ Not optional, and cheaper to do as you go:
    endpoint the caller lacks scope for.
 4. A CI check that fails if a key, password or token appears in the repository.
 5. Dependency audit in CI.
-6. A documented incident response process: who to call, how to assess against
+6. A test asserting every admin CLI command writes an audit row, and that the
+   CLI has no code path that reads participant data.
+7. A test asserting the local database holds no plaintext for encrypted columns
+   after a sync (inspect the OPFS file directly).
+8. A documented incident response process: who to call, how to assess against
    the NDB scheme, how to notify.
-7. Penetration testing before the first production deployment with real
+9. Penetration testing before the first production deployment with real
    participant data. This is a system holding health records about vulnerable
    people, and self-review is not enough.

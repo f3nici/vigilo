@@ -24,7 +24,10 @@ sending and the server validates again on receipt.
 
   Codes: `unauthenticated`, `totp_required`, `password_change_required`,
   `scope_denied`, `not_found`, `validation_failed`, `conflict`,
-  `template_version_mismatch`, `rate_limited`, `server_error`.
+  `template_version_mismatch`, `rate_limited`, `update_required`,
+  `server_error`.
+  `update_required` is returned when a cached PWA bundle is more than one minor
+  version behind the API, and the client responds by force-refreshing.
   Messages are safe to show a user and never leak whether a participant exists.
 
 - Every response includes `X-Server-Time` so devices can measure clock skew.
@@ -94,8 +97,11 @@ range/threshold keys present (rejected outright, since ranges are out of scope).
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET/POST | `/participants/:id/schedules` | admin, team leader in scope |
-| PATCH/DELETE | `/schedules/:id` | changing `window_minutes` or `anchor_time` regenerates future windows only |
+| GET/POST | `/participants/:id/schedules` | admin, team leader in scope. A schedule is created with its segments in one request |
+| GET | `/schedules/:id` | schedule with its segments |
+| PATCH/DELETE | `/schedules/:id` | |
+| PUT | `/schedules/:id/segments` | replaces the whole segment set atomically, so overlap validation runs against the final state rather than intermediate ones |
+| POST | `/schedules/:id/preview` | **Does not save.** Body is a candidate segment set, response is the windows it would produce for a given date, plus warnings for overlaps, gaps, uneven division, and any existing window holding an entry that the change would orphan |
 | GET/PUT | `/participants/:id/coverage-pattern` | whole weekly pattern replaced atomically |
 | GET/POST | `/participants/:id/coverage-exceptions` | |
 | PATCH/DELETE | `/coverage-exceptions/:id` | |
@@ -104,6 +110,26 @@ range/threshold keys present (rejected outright, since ranges are out of scope).
 Recalculation preview matters. Changing a coverage pattern can turn hundreds of
 missed windows into not-expected ones and rewrite compliance history, so it must
 show what it will change before it changes it, and it is heavily audited.
+
+`POST /schedules/:id/preview` response:
+
+```json
+{
+  "date": "2026-07-27",
+  "windows": [
+    { "startsAt": "2026-07-27T07:00:00+10:00", "endsAt": "…T09:00:00+10:00", "expected": true },
+    { "startsAt": "…T09:00:00+10:00", "endsAt": "…T11:00:00+10:00", "expected": true }
+  ],
+  "warnings": [
+    { "code": "uneven_division", "message": "21:00 to 07:00 with a 240 minute window leaves a 120 minute final window." },
+    { "code": "entries_affected", "count": 0 }
+  ]
+}
+```
+
+Segment changes regenerate future windows only. A window that already holds an
+entry is never destroyed, and `entries_affected` in the preview reports any that
+would be orphaned so the admin sees it before saving.
 
 ## 7. Windows and entries
 
@@ -231,7 +257,29 @@ The three endpoints the mobile app depends on. Full behaviour in doc 05.
 }
 ```
 
-## 14. Health
+## 14. Push subscriptions
+
+Web Push in v1, FCM and APNs in the native phase, same endpoints either way.
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/push/vapid-key` | public VAPID key for the service worker to subscribe with |
+| POST | `/push/subscriptions` | stores the subscription against the device record |
+| DELETE | `/push/subscriptions/:id` | on sign-out or unsubscribe |
+| GET/PUT | `/me/notification-preferences` | per-kind toggles |
+
+Payloads carry an initial and surname at most, never clinical content, and always
+a deep link. A 410 from the push service marks the subscription dead and prunes
+it.
+
+## 15. Health
 
 `GET /health` liveness, `GET /ready` checks DB and migration state. Neither
 requires auth, neither leaks version details publicly beyond a build hash.
+
+## 16. Not exposed over HTTP
+
+Break-glass account recovery is deliberately **not** an API. No endpoint creates
+an admin, resets a password without authentication, or clears TOTP. That work
+happens through the CLI in the API container, run over `docker compose exec` by
+someone with shell access to the host. See doc 01 §10.1 and doc 02 §9.

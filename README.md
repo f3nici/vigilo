@@ -8,12 +8,15 @@ currently holds the documents a build session needs to implement the product.
 
 ## What it is
 
-A single organisation runs one self-hosted instance. Support workers open the
-app on their phone, see the participants they are assigned to, record
-observation checks inside recurring time windows (typically every 2 hours), and
-write diary entries. Admins define what a check contains, when it is expected,
-and who can see what. Everything works with no signal and syncs when the phone
-gets back online.
+A single organisation runs one self-hosted instance. Support workers install the
+app to their phone's home screen, see the participants they are assigned to,
+record observation checks inside recurring time windows (typically every 2
+hours), and write diary entries. Admins define what a check contains, when it is
+expected, and who can see what. Everything works with no signal and syncs when
+the phone gets back online.
+
+**It ships as an installable PWA first.** Native Android and iOS store builds
+wrap the same code with Capacitor and are the final phases of the build.
 
 It is not a rostering or shift-tracking system. It does not do billing.
 
@@ -38,15 +41,20 @@ Read in order. Each one assumes the ones before it.
 
 - Single organisation, self-hosted on a cloud VPS. Not multi-tenant.
 - Scale target: 20 to 200 participants, 30 to 300 staff.
-- Vue 3 + TypeScript + Vite + Tailwind, wrapped by Capacitor for Android and iOS.
-- Node + TypeScript API, PostgreSQL, Drizzle ORM.
-- Full offline capture and sync, custom append-only design, on-device SQLite.
+- Vue 3 + TypeScript + Vite + Tailwind. Node + TypeScript API, PostgreSQL,
+  Drizzle ORM.
+- **Installable PWA is v1.** Capacitor native builds are the last two phases.
+- Full offline capture and sync, custom append-only design. SQLite on the device
+  either way: SQLite-WASM over OPFS in the PWA, native SQLite later.
 - Roles: admin, team leader, nurse, support worker, participant.
 - Workers see only assigned participants. Admins can grant temporary access.
-- Checks are recorded inside per-participant time windows, default 2 hours.
+- Checks sit on a **fixed, admin-configured window grid**, default 2 hours, with
+  segments for different intervals by time of day.
 - No clinical normal ranges anywhere in the system.
 - No AI features in v1.
-- No transactional email. Admins issue credentials directly.
-- Android and web first. iOS is blocked on Mac or CI signing access.
+- No transactional email. Admins issue credentials, and account recovery is a
+  **CLI run on the server** over `docker compose exec`.
+- iOS store release is still blocked on Mac or CI signing access, but iOS staff
+  get a working installed PWA with push at the v1 line regardless.
 
 Full detail and rationale in [10-decisions-and-open-questions.md](docs/10-decisions-and-open-questions.md).
