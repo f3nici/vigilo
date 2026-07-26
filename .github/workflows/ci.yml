@@ -124,6 +124,11 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Generate a throwaway master key
+        # Never a real key. This stack is torn down at the end of the job and
+        # holds nothing but the seeded org settings row.
+        run: echo "MASTER_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
       - name: Run the pushed images
         env:
           IMAGE_PREFIX: ${{ env.REGISTRY_IMAGE_PREFIX }}
@@ -145,6 +150,16 @@ jobs:
 
       - name: Serve the SPA
         run: curl -fsS http://localhost:8081/ | grep -q '<div id="app">'
+
+      - name: The API refuses anonymous access to scoped data
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/api/v1/participants)
+          test "$code" = "401" || { echo "expected 401, got $code"; exit 1; }
+
+      - name: The break-glass CLI runs in the API container
+        run: |
+          docker compose exec -T api npm run admin -- admin:list | grep -q 'No admin accounts exist'
+          docker compose exec -T api npm run admin -- audit:verify | grep -q 'Audit chain intact'
 
       - name: Tear down
         if: always()
