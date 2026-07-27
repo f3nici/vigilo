@@ -1,35 +1,141 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
+import { RouterLink, useRouter } from 'vue-router';
+import {
+  canManageParticipants,
+  compareParticipants,
+  matchesParticipantSearch,
+  ndisNumberSchema,
+  participantDisplayName,
+  type ParticipantSummary,
+} from '@vigilo/shared';
 import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 import { useSessionStore } from '@/stores/session';
+import { timeRemaining } from '@/lib/format';
 
 /**
- * Phase 1 shows what the scope layer returns and nothing more. Names and every
- * other encrypted field arrive in Phase 2 along with the record itself.
+ * The participant list (doc 06 §4.1).
+ *
+ * Filtering happens here, in the browser, over the already-decrypted list. The
+ * names are encrypted in the database, so searching them server-side would mean
+ * decrypting every row on every keystroke.
  */
 const session = useSessionStore();
-const participants = ref<{ id: string; status: string }[]>([]);
+const router = useRouter();
+
+const participants = ref<ParticipantSummary[]>([]);
 const loading = ref(true);
 const error = ref('');
+const search = ref('');
+const includeArchived = ref(false);
 
-onMounted(async () => {
+const ndis = ref('');
+const lookingUp = ref(false);
+const lookupResult = ref('');
+
+const isAdmin = computed(() => canManageParticipants(session.principal?.role ?? 'worker'));
+
+const visible = computed(() =>
+  participants.value
+    .filter((participant) => matchesParticipantSearch(participant, search.value))
+    .sort(compareParticipants),
+);
+
+async function load(): Promise<void> {
+  loading.value = true;
+  error.value = '';
   try {
-    participants.value = await api.listParticipants();
+    participants.value = await api.listParticipants({ includeArchived: includeArchived.value });
   } catch (err) {
-    error.value = err instanceof ApiRequestError ? err.message : 'Could not load participants.';
+    error.value =
+      err instanceof ApiRequestError ? err.message : 'Could not load the participant list.';
   } finally {
     loading.value = false;
   }
-});
+}
+
+onMounted(load);
+
+/**
+ * Exact match on the NDIS number, which is the one thing the server can look up
+ * without decrypting: the blind index is an HMAC, so there is no partial match
+ * and no "starts with". Useful for checking whether someone is already on the
+ * system before adding them again.
+ */
+async function lookup(): Promise<void> {
+  const parsed = ndisNumberSchema.safeParse(ndis.value);
+  if (!parsed.success) {
+    lookupResult.value = parsed.error.issues[0]?.message ?? 'Check that number.';
+    return;
+  }
+
+  lookingUp.value = true;
+  lookupResult.value = '';
+  try {
+    const found = await api.lookupByNdisNumber(parsed.data);
+    if (found) {
+      await router.push({ name: 'participant', params: { id: found.id } });
+    } else {
+      lookupResult.value = 'Nobody on the system has that NDIS number.';
+    }
+  } catch (err) {
+    lookupResult.value = err instanceof ApiRequestError ? err.message : 'That lookup failed.';
+  } finally {
+    lookingUp.value = false;
+  }
+}
 </script>
 
 <template>
-  <div class="space-y-4">
-    <h1 class="text-2xl font-semibold">Participants</h1>
+  <div class="space-y-5">
+    <div class="flex flex-wrap items-center gap-3">
+      <h1 class="text-2xl font-semibold">Participants</h1>
+      <RouterLink v-if="isAdmin" class="btn btn-primary ml-auto" :to="{ name: 'participant-new' }">
+        Add a participant
+      </RouterLink>
+    </div>
 
     <FormError :message="error" />
+
+    <div class="flex flex-wrap items-end gap-4">
+      <div class="min-w-56 flex-1">
+        <label class="field-label" for="participant-search">Search</label>
+        <input
+          id="participant-search"
+          v-model="search"
+          class="field"
+          type="search"
+          placeholder="Name or preferred name"
+        />
+      </div>
+
+      <label v-if="isAdmin" class="flex min-h-12 items-center gap-2 text-sm">
+        <input v-model="includeArchived" type="checkbox" class="size-5" @change="load" />
+        Show archived
+      </label>
+    </div>
+
+    <form v-if="isAdmin" class="flex flex-wrap items-end gap-3" @submit.prevent="lookup">
+      <div class="min-w-56">
+        <label class="field-label" for="ndis-lookup">Find by NDIS number</label>
+        <input
+          id="ndis-lookup"
+          v-model="ndis"
+          class="field tabular"
+          type="text"
+          inputmode="numeric"
+          placeholder="431 234 567"
+        />
+      </div>
+      <button class="btn border-border-default border" type="submit" :disabled="lookingUp">
+        {{ lookingUp ? 'Looking' : 'Look up' }}
+      </button>
+      <p v-if="lookupResult" class="text-text-secondary min-h-12 self-center text-sm">
+        {{ lookupResult }}
+      </p>
+    </form>
 
     <p v-if="loading" class="text-text-secondary">Loading.</p>
 
@@ -37,22 +143,53 @@ onMounted(async () => {
       <p class="font-medium">No participants in your scope.</p>
       <p class="text-text-secondary mt-1">
         {{
-          session.principal?.role === 'admin'
-            ? 'Participant records arrive in Phase 2. An admin will add them from here.'
-            : 'You will see people here once an admin assigns them to you.'
+          isAdmin
+            ? 'Add the first one to get started.'
+            : 'You will see people here once someone assigns them to you.'
         }}
       </p>
     </div>
 
-    <div v-else class="card p-4">
-      <p class="text-text-secondary text-sm">
-        {{ participants.length }} in your scope. Records themselves arrive in Phase 2.
-      </p>
-      <ul class="mt-3 space-y-1">
-        <li v-for="participant in participants" :key="participant.id" class="tabular text-sm">
-          {{ participant.id }} ({{ participant.status }})
-        </li>
-      </ul>
-    </div>
+    <p v-else-if="visible.length === 0" class="text-text-secondary">
+      Nobody matches "{{ search }}".
+    </p>
+
+    <ul v-else class="space-y-3">
+      <li v-for="participant in visible" :key="participant.id">
+        <RouterLink
+          class="card hover:border-primary block p-4"
+          :to="{ name: 'participant', params: { id: participant.id } }"
+        >
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <p class="text-lg font-semibold">
+              {{ participantDisplayName(participant) }}
+            </p>
+            <p v-if="participant.preferredName" class="text-text-secondary text-sm">
+              {{ participant.firstName }} {{ participant.lastName }}
+            </p>
+
+            <div class="ml-auto flex flex-wrap items-center gap-2 text-sm">
+              <span
+                v-if="participant.status === 'archived'"
+                class="rounded-full border px-2 py-0.5"
+                :style="{
+                  borderColor: 'var(--vigilo-not-expected)',
+                  color: 'var(--vigilo-not-expected)',
+                }"
+              >
+                Archived
+              </span>
+              <span
+                v-if="participant.access.kind === 'temporary' && participant.access.expiresAt"
+                class="rounded-full border px-2 py-0.5"
+                :style="{ borderColor: 'var(--vigilo-partial)', color: 'var(--vigilo-partial)' }"
+              >
+                Temporary access, {{ timeRemaining(participant.access.expiresAt) }}
+              </span>
+            </div>
+          </div>
+        </RouterLink>
+      </li>
+    </ul>
   </div>
 </template>

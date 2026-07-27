@@ -111,7 +111,6 @@ export async function resetPassword(
       failedAttempts: 0,
       lockedUntil: null,
       updatedAt: new Date(),
-      revision: sql`${users.revision} + 1`,
     })
     .where(eq(users.id, userId))
     .returning();
@@ -142,7 +141,7 @@ export async function suspendUser(
 ): Promise<UserSummary> {
   const [updated] = await db
     .update(users)
-    .set({ status: 'suspended', updatedAt: new Date(), revision: sql`${users.revision} + 1` })
+    .set({ status: 'suspended', updatedAt: new Date() })
     .where(eq(users.id, userId))
     .returning();
 
@@ -173,7 +172,6 @@ export async function reinstateUser(
       failedAttempts: 0,
       lockedUntil: null,
       updatedAt: new Date(),
-      revision: sql`${users.revision} + 1`,
     })
     .where(eq(users.id, userId))
     .returning();
@@ -202,7 +200,6 @@ export async function resetTotp(
       totpSecretEnc: null,
       totpEnabledAt: null,
       updatedAt: new Date(),
-      revision: sql`${users.revision} + 1`,
     })
     .where(eq(users.id, userId))
     .returning();

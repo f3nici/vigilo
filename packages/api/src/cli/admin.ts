@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { userInfo } from 'node:os';
 import { emailSchema, type Role } from '@vigilo/shared';
 import { loadConfig } from '../config.js';
@@ -196,7 +196,6 @@ async function run(db: Database, args: Args): Promise<number> {
           failedAttempts: 0,
           lockedUntil: null,
           updatedAt: new Date(),
-          revision: sql`${users.revision} + 1`,
         })
         .where(eq(users.id, user.id));
 
@@ -228,7 +227,6 @@ async function run(db: Database, args: Args): Promise<number> {
           totpSecretEnc: null,
           totpEnabledAt: null,
           updatedAt: new Date(),
-          revision: sql`${users.revision} + 1`,
         })
         .where(eq(users.id, user.id));
 

@@ -38,6 +38,24 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, title: 'Participants' },
       },
       {
+        path: 'participants/new',
+        name: 'participant-new',
+        component: () => import('@/views/ParticipantFormView.vue'),
+        meta: { requiresAuth: true, roles: ['admin'], title: 'Add a participant' },
+      },
+      {
+        path: 'participants/:id',
+        name: 'participant',
+        component: () => import('@/views/ParticipantView.vue'),
+        meta: { requiresAuth: true, title: 'Participant' },
+      },
+      {
+        path: 'participants/:id/edit',
+        name: 'participant-edit',
+        component: () => import('@/views/ParticipantFormView.vue'),
+        meta: { requiresAuth: true, roles: ['admin'], title: 'Edit participant' },
+      },
+      {
         path: 'users',
         name: 'users',
         component: () => import('@/views/UsersView.vue'),

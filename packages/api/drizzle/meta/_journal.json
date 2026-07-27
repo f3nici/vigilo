@@ -36,6 +36,20 @@
       "when": 1785064982243,
       "tag": "0004_grant_migrations_read",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785140740694,
+      "tag": "0005_participants",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785140794006,
+      "tag": "0006_global_revision",
+      "breakpoints": true
     }
   ]
 }
