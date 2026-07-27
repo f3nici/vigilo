@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
+import { canManageTemplates } from '@vigilo/shared';
 import ThemeToggle from './ThemeToggle.vue';
 import VigiloMark from './VigiloMark.vue';
 import { useSessionStore } from '@/stores/session';
@@ -14,6 +15,9 @@ const nav = computed(() => {
     { name: 'today', label: 'Today' },
     { name: 'participants', label: 'Participants' },
   ];
+  if (canManageTemplates(session.principal?.role ?? 'worker')) {
+    items.push({ name: 'check-templates', label: 'Check forms' });
+  }
   if (session.principal?.role === 'admin') items.push({ name: 'users', label: 'People' });
   items.push({ name: 'system', label: 'System' });
   return items;

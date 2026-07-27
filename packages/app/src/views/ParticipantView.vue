@@ -15,6 +15,7 @@ import ParticipantAlerts from '@/components/ParticipantAlerts.vue';
 import EmergencyContacts from '@/components/EmergencyContacts.vue';
 import EmergencyPlanPanel from '@/components/EmergencyPlanPanel.vue';
 import ParticipantAssignments from '@/components/ParticipantAssignments.vue';
+import ParticipantChecks from '@/components/ParticipantChecks.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 import { useSessionStore } from '@/stores/session';
@@ -23,9 +24,9 @@ import { ageInYears, formatDate, timeRemaining } from '@/lib/format';
 /**
  * The participant overview (doc 06 §4.2).
  *
- * Alerts sit above everything, always. The timeline, checks and diary tabs
- * arrive with the features behind them in Phases 3 and 4; until then this
- * screen is the record itself rather than a shell of empty tabs.
+ * Alerts sit above everything, always. Checks arrived in Phase 3; the diary
+ * and the merged timeline arrive in Phase 4. Sections appear as the features
+ * behind them exist, rather than as a shell of empty tabs.
  */
 const route = useRoute();
 const router = useRouter();
@@ -209,6 +210,8 @@ async function restore(): Promise<void> {
           </div>
         </dl>
       </section>
+
+      <ParticipantChecks :participant-id="participant.id" />
 
       <EmergencyContacts
         :participant-id="participant.id"

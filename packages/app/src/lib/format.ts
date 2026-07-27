@@ -57,3 +57,46 @@ export function ageInYears(dateOfBirth: string, now = new Date()): number | null
   if (monthDiff < 0 || (monthDiff === 0 && now.getDate() < born.getDate())) age -= 1;
   return age;
 }
+
+/**
+ * A window's clock times in the org timezone, which is the only timezone staff
+ * ever see (doc 06 §7). A phone in another zone still reads the roster's hours.
+ */
+export function formatWindowTime(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-AU', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).format(new Date(iso));
+}
+
+export function formatWindowRange(startsAt: string, endsAt: string, timeZone: string): string {
+  return `${formatWindowTime(startsAt, timeZone)}–${formatWindowTime(endsAt, timeZone)}`;
+}
+
+export function formatDayHeading(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-AU', {
+    timeZone,
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date(iso));
+}
+
+/** "closes in 34 min", "closed 2 hours ago". The useful half of a timestamp. */
+export function closesIn(endsAt: string, now = new Date()): string {
+  const ms = new Date(endsAt).getTime() - now.getTime();
+  const minutes = Math.round(Math.abs(ms) / 60_000);
+
+  if (ms > 0) {
+    if (minutes < 60) return `closes in ${minutes} min`;
+    const hours = Math.round(minutes / 60);
+    return `closes in ${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  }
+
+  if (minutes < 60) return `closed ${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `closed ${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+  return `closed ${Math.round(hours / 24)} days ago`;
+}

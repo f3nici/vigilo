@@ -104,11 +104,87 @@ export async function resetData(ownerDb: Database): Promise<void> {
       participant_alerts,
       emergency_contacts,
       emergency_plans,
+      check_entry_revisions,
+      check_entry_values,
+      check_entries,
+      window_miss_reasons,
+      check_windows,
+      check_schedule_segments,
+      check_schedules,
+      check_template_versions,
+      check_templates,
+      coverage_patterns,
+      coverage_exceptions,
       users,
       participants
     restart identity cascade
   `);
+
+  // The seeded reason codes come from migration 0008 and are configuration
+  // rather than test data, so they are put back rather than left truncated.
+  await ownerDb.execute(sql`
+    insert into missed_reason_codes (code, label, requires_note, sort_order)
+    values
+      ('asleep', 'Participant was asleep', false, 10),
+      ('refused', 'Participant refused', false, 20),
+      ('not_home', 'Participant was not home', false, 30),
+      ('staff_emergency', 'Staff attending an emergency', false, 40),
+      ('equipment_unavailable', 'Equipment unavailable', false, 50),
+      ('family_supporting', 'Family was supporting', false, 60),
+      ('forgot', 'Forgot to record it', false, 70),
+      ('other', 'Something else', true, 80)
+    on conflict (code) do update set active = true, requires_note = excluded.requires_note
+  `);
 }
+
+/** The vent observation form the documents use, ready to publish. */
+export const VENT_SCHEMA = {
+  fields: [
+    {
+      key: 'urine_output',
+      label: 'Urine output',
+      type: 'number',
+      unit: 'ml',
+      decimals: 0,
+      min: 0,
+      max: 5000,
+      required: true,
+      help: 'Since the last check',
+      sort: 10,
+    },
+    {
+      key: 'vent_mode',
+      label: 'Ventilator mode',
+      type: 'single_choice',
+      options: [
+        { value: 'cpap', label: 'CPAP' },
+        { value: 'bipap', label: 'BiPAP' },
+      ],
+      required: true,
+      sort: 20,
+    },
+    {
+      key: 'cares',
+      label: 'Cares completed',
+      type: 'checklist',
+      items: [
+        { value: 'repositioned', label: 'Repositioned' },
+        { value: 'mouth_care', label: 'Mouth care' },
+      ],
+      required: false,
+      sort: 30,
+    },
+    {
+      key: 'comment',
+      label: 'Comment',
+      type: 'text',
+      multiline: true,
+      maxLength: 2000,
+      required: false,
+      sort: 40,
+    },
+  ],
+};
 
 export const TEST_PASSWORD = 'a-long-enough-test-passphrase';
 

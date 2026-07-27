@@ -4,14 +4,14 @@ import type { Logger } from '../logger.js';
 import { jobRuns } from '../db/schema.js';
 import { verifyAuditChain } from '../services/audit.js';
 import { pruneExpiredAuth } from '../services/maintenance.js';
+import { closeWindows, materialiseHorizon } from '../services/windows.js';
 
 /**
  * Background jobs (doc 02 §6).
  *
  * All jobs are idempotent and safe to run twice, and each writes a job run
  * record with its outcome so a cron that stopped firing is visible rather than
- * silent. Phase 1 only has the two that identity needs; the window
- * materialiser and closer arrive in Phase 3.
+ * silent.
  */
 
 type JobResult = { status: 'ok' | 'failed'; detail: Record<string, unknown> };
@@ -80,6 +80,45 @@ export function startJobs(db: Database, logger: Logger): { stop: () => void } {
       void runJob(db, logger, 'auth.prune_expired', async () => {
         const removed = await pruneExpiredAuth(db);
         return { status: 'ok', detail: removed };
+      });
+    }),
+  );
+
+  /**
+   * The window materialiser (doc 01 §5.3). Lays the grid 7 days ahead so a
+   * phone that loses signal on Monday still knows what is due on Thursday.
+   *
+   * Hourly rather than nightly because a schedule created at 10am should not
+   * wait until tomorrow to produce windows, and because an hourly idempotent
+   * insert costs nothing when there is nothing to add.
+   */
+  tasks.push(
+    schedule('5 * * * *', () => {
+      void runJob(db, logger, 'checks.materialise_windows', async () => {
+        const result = await materialiseHorizon(db);
+        if (result.skippedUnpublished > 0) {
+          logger.warn(
+            { skipped: result.skippedUnpublished },
+            'schedules point at a check form with no published version, so no windows were made for them',
+          );
+        }
+        return { status: 'ok', detail: { ...result } };
+      });
+    }),
+  );
+
+  /**
+   * The closer. Moves windows that have closed unrecorded to `missed`, which
+   * is what puts them at the top of the next worker's Today screen.
+   *
+   * Every five minutes: a worker who misses a check should see it prompted
+   * within the same shift, not the next day.
+   */
+  tasks.push(
+    schedule('*/5 * * * *', () => {
+      void runJob(db, logger, 'checks.close_windows', async () => {
+        const result = await closeWindows(db);
+        return { status: 'ok', detail: { ...result } };
       });
     }),
   );

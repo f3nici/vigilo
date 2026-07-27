@@ -1,0 +1,158 @@
+import { z } from 'zod';
+import { entryStatusSchema, missReasonSchema } from './checks.js';
+
+/**
+ * The window state machine (doc 03 §5).
+ *
+ * ```
+ *                     coverage says not covered
+ *    [created] ─────────────────────────────────► not_expected
+ *        │                                              │
+ *        │ coverage says covered                        │ entry recorded anyway
+ *        ▼                                              ▼
+ *     pending ──first value saved──► partial ──all required saved──► complete
+ *        │                              │
+ *        │ ends_at passes               │ ends_at passes
+ *        ▼                              ▼
+ *      missed ◄───────────────────── missed (partial, unresolved)
+ * ```
+ *
+ * `missed` is not terminal. A late entry can still complete a missed window,
+ * and the window keeps `is_late` and its miss reason for the record, because a
+ * check that happened an hour late is a different fact from one that never
+ * happened and both belong in the history.
+ *
+ * The device and the server both derive status from this function rather than
+ * storing a status one of them invented. If they can disagree, that is a bug.
+ */
+
+export const windowStatuses = ['pending', 'partial', 'complete', 'missed', 'not_expected'] as const;
+
+export const windowStatusSchema = z.enum(windowStatuses);
+export type WindowStatus = z.infer<typeof windowStatusSchema>;
+
+export type WindowStatusInput = {
+  expected: boolean;
+  hasEntry: boolean;
+  /** Every required field in the bound template version has a value. */
+  entryComplete: boolean;
+  endsAt: Date;
+  now: Date;
+};
+
+export function nextWindowStatus(input: WindowStatusInput): WindowStatus {
+  // A completed entry is a completed check, whether or not anyone expected it.
+  if (input.entryComplete) return 'complete';
+
+  const closed = input.now.getTime() >= input.endsAt.getTime();
+
+  if (!input.expected) {
+    // Never `missed`: nobody from the team was there to miss it. A part-filled
+    // entry still shows as partial so the work that was done is visible.
+    return input.hasEntry ? 'partial' : 'not_expected';
+  }
+
+  if (!closed) return input.hasEntry ? 'partial' : 'pending';
+
+  return 'missed';
+}
+
+/** Counted in compliance. `not_expected` is excluded from the denominator. */
+export function countsTowardCompliance(status: WindowStatus): boolean {
+  return status !== 'not_expected';
+}
+
+export function needsMissReason(status: WindowStatus, hasMissReason: boolean): boolean {
+  return status === 'missed' && !hasMissReason;
+}
+
+/**
+ * Lateness is measured from the server's clock against `ends_at` (doc 03 §6),
+ * not from the device's, so a phone with the wrong time cannot record a check
+ * as on time when it was not.
+ */
+export function lateByMinutes(endsAt: Date, receivedAt: Date): number {
+  const late = receivedAt.getTime() - endsAt.getTime();
+  return late <= 0 ? 0 : Math.ceil(late / 60_000);
+}
+
+export function isLate(endsAt: Date, receivedAt: Date): boolean {
+  return receivedAt.getTime() > endsAt.getTime();
+}
+
+/**
+ * Back-fill past the cut-off needs a team leader (doc 01 §5.5, A6). Default
+ * 24 hours, held in org settings. This stops indefinite retrospective record
+ * creation without blocking the worker who is an hour behind.
+ */
+export function backfillNeedsApproval(endsAt: Date, now: Date, cutoffMinutes: number): boolean {
+  return lateByMinutes(endsAt, now) > cutoffMinutes;
+}
+
+export const checkWindowSchema = z.object({
+  id: z.string(),
+  participantId: z.string(),
+  scheduleId: z.string(),
+  scheduleName: z.string(),
+  segmentId: z.string().nullable(),
+  templateVersionId: z.string(),
+  templateName: z.string(),
+  startsAt: z.string(),
+  endsAt: z.string(),
+  expected: z.boolean(),
+  /** Why it is not expected, for the greyed-out row (doc 06 §3). */
+  coverageReason: z.string().nullable(),
+  status: windowStatusSchema,
+  completedAt: z.string().nullable(),
+  isLate: z.boolean(),
+  lateByMinutes: z.number().nullable(),
+  /** Filled of required, so the home screen can draw its progress bar. */
+  requiredFieldCount: z.number(),
+  filledRequiredCount: z.number(),
+  entryId: z.string().nullable(),
+  missReason: missReasonSchema.nullable(),
+});
+
+export type CheckWindow = z.infer<typeof checkWindowSchema>;
+
+/** The window plus everything needed to render its form offline (doc 04 §7). */
+export const windowDetailSchema = checkWindowSchema.extend({
+  templateSchema: z.unknown(),
+  entryStatus: entryStatusSchema.nullable(),
+  entry: z.unknown().nullable(),
+  /** True when saving now would need a team leader (doc 01 §5.5). */
+  backfillNeedsApproval: z.boolean(),
+});
+
+export type WindowDetail = z.infer<typeof windowDetailSchema>;
+
+/**
+ * How a window reads on the Today screen. Ordering is deliberate: anything
+ * needing a reason sits above anything still open, which sits above the rest
+ * (doc 06 §3).
+ */
+export function windowSortRank(window: {
+  status: WindowStatus;
+  missReason: unknown | null;
+}): number {
+  if (needsMissReason(window.status, window.missReason !== null)) return 0;
+  if (window.status === 'pending' || window.status === 'partial') return 1;
+  if (window.status === 'missed') return 2;
+  if (window.status === 'complete') return 3;
+  return 4;
+}
+
+export function describeWindowStatus(status: WindowStatus): string {
+  switch (status) {
+    case 'pending':
+      return 'Not started';
+    case 'partial':
+      return 'Part recorded';
+    case 'complete':
+      return 'Recorded';
+    case 'missed':
+      return 'Missed';
+    case 'not_expected':
+      return 'Not expected';
+  }
+}

@@ -64,3 +64,41 @@ export function canWriteEmergencyPlan(role: Role): boolean {
 export function canGrantAccess(role: Role): boolean {
   return role === 'admin' || role === 'team_leader';
 }
+
+/**
+ * Checks (doc 01 §3.6).
+ *
+ * A nurse defines what is recorded and an admin decides when, which is why
+ * these two are different lists rather than one "configure checks" permission.
+ * Clinical authority and administrative authority are deliberately separate.
+ */
+export function canManageTemplates(role: Role): boolean {
+  return role === 'admin' || role === 'nurse';
+}
+
+export function canManageSchedules(role: Role): boolean {
+  return role === 'admin' || role === 'team_leader';
+}
+
+/** Every staff role records checks. A self-access account reads only. */
+export function canRecordChecks(role: Role): boolean {
+  return role !== 'participant';
+}
+
+/** A worker edits their own entry; changing someone else's needs oversight. */
+export function canEditOthersEntries(role: Role): boolean {
+  return role === 'admin' || role === 'team_leader' || role === 'nurse';
+}
+
+/**
+ * Back-fill past the cut-off (default 24 hours) needs a team leader (A6).
+ * Without this, a record could be created for any day in the past at any time,
+ * which is the difference between a late entry and a fabricated one.
+ */
+export function canBackfillPastCutoff(role: Role): boolean {
+  return role === 'admin' || role === 'team_leader' || role === 'nurse';
+}
+
+export function canManageReasonCodes(role: Role): boolean {
+  return role === 'admin';
+}

@@ -8,9 +8,16 @@
 
 export * from './access.js';
 export * from './auth.js';
+export * from './checks.js';
+export * from './coverage.js';
 export * from './errors.js';
 export * from './health.js';
+export * from './intervals.js';
 export * from './participants.js';
 export * from './password.js';
 export * from './roles.js';
+export * from './schedules.js';
+export * from './templates.js';
 export * from './time.js';
+export * from './timezone.js';
+export * from './windows.js';
