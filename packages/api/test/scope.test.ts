@@ -45,8 +45,8 @@ describe('out-of-scope access is denied for every role', () => {
 
   for (const { role, grant } of cases) {
     it(`denies a ${role} a participant outside their scope`, async () => {
-      const inScope = await seedParticipant(h.ownerDb);
-      const outOfScope = await seedParticipant(h.ownerDb);
+      const inScope = await seedParticipant(h.ownerDb, h.keyRing);
+      const outOfScope = await seedParticipant(h.ownerDb, h.keyRing);
 
       const user = await seedUser(h.ownerDb, h.keyRing, {
         role,
@@ -73,8 +73,8 @@ describe('out-of-scope access is denied for every role', () => {
   }
 
   it('gives an admin every participant', async () => {
-    const a = await seedParticipant(h.ownerDb);
-    const b = await seedParticipant(h.ownerDb);
+    const a = await seedParticipant(h.ownerDb, h.keyRing);
+    const b = await seedParticipant(h.ownerDb, h.keyRing);
     const admin = await seedUser(h.ownerDb, h.keyRing, { role: 'admin' });
 
     const { cookies } = await signIn(h, admin);
@@ -100,7 +100,7 @@ describe('out-of-scope access is denied for every role', () => {
   });
 
   it('drops access when a temporary grant expires', async () => {
-    const participantId = await seedParticipant(h.ownerDb);
+    const participantId = await seedParticipant(h.ownerDb, h.keyRing);
     const worker = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
 
     await assign(h.ownerDb, worker.id, participantId, {
@@ -119,7 +119,7 @@ describe('out-of-scope access is denied for every role', () => {
   });
 
   it('drops access when an assignment is revoked', async () => {
-    const participantId = await seedParticipant(h.ownerDb);
+    const participantId = await seedParticipant(h.ownerDb, h.keyRing);
     const worker = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
     await assign(h.ownerDb, worker.id, participantId);
 
@@ -140,8 +140,8 @@ describe('out-of-scope access is denied for every role', () => {
 
 describe('the scoped list', () => {
   it('returns only what each role may see', async () => {
-    const mine = await seedParticipant(h.ownerDb);
-    await seedParticipant(h.ownerDb);
+    const mine = await seedParticipant(h.ownerDb, h.keyRing);
+    await seedParticipant(h.ownerDb, h.keyRing);
 
     const worker = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
     await assign(h.ownerDb, worker.id, mine);
@@ -155,7 +155,7 @@ describe('the scoped list', () => {
   });
 
   it('is empty, not an error, for someone with no assignments', async () => {
-    await seedParticipant(h.ownerDb);
+    await seedParticipant(h.ownerDb, h.keyRing);
     const worker = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
 
     const { cookies } = await signIn(h, worker);
@@ -171,7 +171,8 @@ describe('user administration is admin only', () => {
 
   for (const role of nonAdmins) {
     it(`denies a ${role} the user list`, async () => {
-      const participantId = role === 'participant' ? await seedParticipant(h.ownerDb) : null;
+      const participantId =
+        role === 'participant' ? await seedParticipant(h.ownerDb, h.keyRing) : null;
       const user = await seedUser(h.ownerDb, h.keyRing, { role, participantId });
       const { cookies } = await signIn(h, user);
 

@@ -4,12 +4,12 @@ Care records platform for a disability support team. Participant diaries and
 admin-defined observation checks, working offline. Ships as an installable PWA
 first, with native Android and iOS builds as the final phases.
 
-**Status: Phase 0 (foundations) done.** Monorepo, API with migrations and health
-endpoints, Vue shell with the design tokens, the three platform adapters, Docker
-Compose and CI all exist. There is no identity and no participant data yet.
-**Phase 1 (identity and access) is next**, in `docs/09-roadmap.md`. Do not skip
-ahead of it: retrofitting scope enforcement and encryption onto existing tables
-is far more expensive than building on them.
+**Status: Phases 0, 1 and 2 done.** Monorepo, Docker Compose and CI; identity,
+roles, TOTP, the break-glass CLI, the scope resolver, the audit log and the
+encryption layer; participant records with alerts, emergency contacts, emergency
+plans and assignments. There are no checks, no diary and no offline sync yet.
+**Phase 3 (checks) is next**, in `docs/09-roadmap.md`. It is the biggest phase
+and the reason the product exists.
 
 ## Read before building
 

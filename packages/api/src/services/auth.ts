@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import {
   checkPassword,
@@ -360,7 +360,6 @@ export async function changePassword(
       passwordHash: await hashPassword(newPassword),
       mustChangePassword: false,
       updatedAt: new Date(),
-      revision: sql`${users.revision} + 1`,
     })
     .where(eq(users.id, user.id));
 

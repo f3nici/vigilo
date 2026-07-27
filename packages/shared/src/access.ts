@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { Role } from './roles.js';
 
 /**
@@ -8,7 +9,9 @@ import type { Role } from './roles.js';
  * about who may see whom, that is a bug, and a serious one.
  */
 
-export type AssignmentKind = 'standing' | 'temporary';
+export const assignmentKinds = ['standing', 'temporary'] as const;
+export const assignmentKindSchema = z.enum(assignmentKinds);
+export type AssignmentKind = z.infer<typeof assignmentKindSchema>;
 
 export type Assignment = {
   participantId: string;

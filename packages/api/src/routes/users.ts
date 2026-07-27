@@ -12,6 +12,7 @@ import {
   toSummary,
   unlockUser,
 } from '../services/users.js';
+import { listAssignmentsForUser } from '../services/assignments.js';
 import { currentPrincipal, requireAuth, requireRole } from '../middleware/principal.js';
 import { HttpError } from '../middleware/errors.js';
 import { asyncHandler } from '../middleware/async.js';
@@ -51,6 +52,15 @@ export function userRoutes(db: Database): Router {
       // Shown once. The admin reads it out or hands it over directly.
       const body: IssuedCredential = { user: toSummary(user), oneTimePassword };
       res.status(201).json(body);
+    }),
+  );
+
+  /** Which participants this person can currently see (doc 04 §4). */
+  router.get(
+    '/:id/assignments',
+    asyncHandler(async (req, res) => {
+      const { id } = userIdSchema.parse(req.params);
+      res.json({ assignments: await listAssignmentsForUser(db, id) });
     }),
   );
 

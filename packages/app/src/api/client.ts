@@ -1,19 +1,39 @@
 import {
+  alertSchema,
   apiErrorSchema,
+  assignmentSchema,
   clockSkewMs,
+  emergencyContactSchema,
+  emergencyPlanSchema,
   healthResponseSchema,
+  participantDetailSchema,
+  participantSummarySchema,
   loginResponseSchema,
   meResponseSchema,
   readyResponseSchema,
   totpEnrolResponseSchema,
   userSummarySchema,
+  type CreateAlertRequest,
+  type CreateAssignmentRequest,
+  type CreateContactRequest,
+  type CreateParticipantRequest,
+  type EmergencyContact,
+  type EmergencyPlan,
   type ErrorCode,
   type HealthResponse,
   type IssuedCredential,
   type LoginResponse,
   type MeResponse,
+  type ParticipantAlert,
+  type ParticipantAssignment,
+  type ParticipantDetail,
+  type ParticipantSummary,
+  type PutEmergencyPlanRequest,
   type ReadyResponse,
   type TotpEnrolResponse,
+  type UpdateAlertRequest,
+  type UpdateContactRequest,
+  type UpdateParticipantRequest,
   type UserSummary,
 } from '@vigilo/shared';
 import { z } from 'zod';
@@ -177,11 +197,156 @@ export const reinstateUser = (id: string) => userAction(id, 'reinstate');
 export const resetUserTotp = (id: string) => userAction(id, 'reset-totp');
 export const unlockUser = (id: string) => userAction(id, 'unlock');
 
-// Participants, scoped. Phase 2 fleshes this out.
-const participantListSchema = z.object({
-  participants: z.array(z.object({ id: z.string(), status: z.string() })),
-});
+const assignmentListSchema = z.object({ assignments: z.array(assignmentSchema) });
 
-export async function listParticipants() {
-  return participantListSchema.parse(await request('/v1/participants')).participants;
+export async function listUserAssignments(id: string): Promise<ParticipantAssignment[]> {
+  return assignmentListSchema.parse(await request(`/v1/users/${id}/assignments`)).assignments;
+}
+
+// Participants, scoped.
+const participantListSchema = z.object({ participants: z.array(participantSummarySchema) });
+const participantWrapperSchema = z.object({ participant: participantSummarySchema });
+const participantDetailWrapperSchema = z.object({ participant: participantDetailSchema });
+const alertWrapperSchema = z.object({ alert: alertSchema });
+const contactWrapperSchema = z.object({ contact: emergencyContactSchema });
+const planWrapperSchema = z.object({ emergencyPlan: emergencyPlanSchema });
+
+export async function listParticipants(
+  options: { includeArchived?: boolean } = {},
+): Promise<ParticipantSummary[]> {
+  const query = options.includeArchived ? '?includeArchived=true' : '';
+  return participantListSchema.parse(await request(`/v1/participants${query}`)).participants;
+}
+
+export async function getParticipant(id: string): Promise<ParticipantDetail> {
+  return participantDetailWrapperSchema.parse(await request(`/v1/participants/${id}`)).participant;
+}
+
+export async function createParticipant(
+  input: CreateParticipantRequest,
+): Promise<ParticipantSummary> {
+  return participantWrapperSchema.parse(
+    await request('/v1/participants', { method: 'POST', body: input }),
+  ).participant;
+}
+
+export async function updateParticipant(
+  id: string,
+  input: UpdateParticipantRequest,
+): Promise<ParticipantSummary> {
+  return participantWrapperSchema.parse(
+    await request(`/v1/participants/${id}`, { method: 'PATCH', body: input }),
+  ).participant;
+}
+
+export async function archiveParticipant(id: string): Promise<ParticipantSummary> {
+  return participantWrapperSchema.parse(
+    await request(`/v1/participants/${id}/archive`, { method: 'POST' }),
+  ).participant;
+}
+
+export async function restoreParticipant(id: string): Promise<ParticipantSummary> {
+  return participantWrapperSchema.parse(
+    await request(`/v1/participants/${id}/restore`, { method: 'POST' }),
+  ).participant;
+}
+
+/** Exact match on the NDIS blind index. Null when nobody has that number. */
+export async function lookupByNdisNumber(ndis: string): Promise<ParticipantSummary | null> {
+  const body = z
+    .object({ participant: participantSummarySchema.nullable() })
+    .parse(await request(`/v1/participants/lookup?ndis=${encodeURIComponent(ndis)}`));
+  return body.participant;
+}
+
+export async function createAlert(
+  participantId: string,
+  input: CreateAlertRequest,
+): Promise<ParticipantAlert> {
+  return alertWrapperSchema.parse(
+    await request(`/v1/participants/${participantId}/alerts`, { method: 'POST', body: input }),
+  ).alert;
+}
+
+export async function updateAlert(
+  participantId: string,
+  alertId: string,
+  input: UpdateAlertRequest,
+): Promise<ParticipantAlert> {
+  return alertWrapperSchema.parse(
+    await request(`/v1/participants/${participantId}/alerts/${alertId}`, {
+      method: 'PATCH',
+      body: input,
+    }),
+  ).alert;
+}
+
+export async function deactivateAlert(
+  participantId: string,
+  alertId: string,
+): Promise<ParticipantAlert> {
+  return alertWrapperSchema.parse(
+    await request(`/v1/participants/${participantId}/alerts/${alertId}`, { method: 'DELETE' }),
+  ).alert;
+}
+
+export async function createContact(
+  participantId: string,
+  input: CreateContactRequest,
+): Promise<EmergencyContact> {
+  return contactWrapperSchema.parse(
+    await request(`/v1/participants/${participantId}/contacts`, { method: 'POST', body: input }),
+  ).contact;
+}
+
+export async function updateContact(
+  participantId: string,
+  contactId: string,
+  input: UpdateContactRequest,
+): Promise<EmergencyContact> {
+  return contactWrapperSchema.parse(
+    await request(`/v1/participants/${participantId}/contacts/${contactId}`, {
+      method: 'PATCH',
+      body: input,
+    }),
+  ).contact;
+}
+
+export async function deleteContact(participantId: string, contactId: string): Promise<void> {
+  await request(`/v1/participants/${participantId}/contacts/${contactId}`, { method: 'DELETE' });
+}
+
+export async function putEmergencyPlan(
+  participantId: string,
+  input: PutEmergencyPlanRequest,
+): Promise<EmergencyPlan> {
+  return planWrapperSchema.parse(
+    await request(`/v1/participants/${participantId}/emergency-plan`, {
+      method: 'PUT',
+      body: input,
+    }),
+  ).emergencyPlan;
+}
+
+export async function listAssignments(participantId: string): Promise<ParticipantAssignment[]> {
+  return assignmentListSchema.parse(await request(`/v1/participants/${participantId}/assignments`))
+    .assignments;
+}
+
+export async function grantAssignment(
+  participantId: string,
+  input: CreateAssignmentRequest,
+): Promise<ParticipantAssignment> {
+  return z.object({ assignment: assignmentSchema }).parse(
+    await request(`/v1/participants/${participantId}/assignments`, {
+      method: 'POST',
+      body: input,
+    }),
+  ).assignment;
+}
+
+export async function revokeAssignment(assignmentId: string): Promise<ParticipantAssignment> {
+  return z
+    .object({ assignment: assignmentSchema })
+    .parse(await request(`/v1/assignments/${assignmentId}`, { method: 'DELETE' })).assignment;
 }

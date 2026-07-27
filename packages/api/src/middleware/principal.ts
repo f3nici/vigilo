@@ -1,11 +1,11 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { and, eq, isNull } from 'drizzle-orm';
-import type { Role, Scope } from '@vigilo/shared';
+import type { ParticipantAccess, Role, Scope } from '@vigilo/shared';
 import type { Database } from '../db/client.js';
 import { sessions } from '../db/schema.js';
 import { hashToken } from '../crypto/passwords.js';
 import { findById, pendingRequirement, touchSession, type UserRow } from '../services/auth.js';
-import { resolveScopeFor } from '../services/scope.js';
+import { resolveScopeDetail } from '../services/scope.js';
 import { getOrgSettings } from '../services/org.js';
 import { HttpError } from './errors.js';
 import type { AuditActor } from '../services/audit.js';
@@ -32,9 +32,16 @@ export type PrincipalContext = {
   user: UserRow;
   role: Role;
   scope: Scope;
+  /** How this principal reaches each participant in scope. Empty for admins. */
+  access: Map<string, ParticipantAccess>;
   sessionId: string;
   authModel: AuthModel;
 };
+
+/** An admin is not limited to a list, so nothing about their access expires. */
+export function accessTo(principal: PrincipalContext, participantId: string): ParticipantAccess {
+  return principal.access.get(participantId) ?? { kind: 'all', expiresAt: null };
+}
 
 /** Populated on every request, authenticated or not, for audit purposes. */
 export function auditActorMiddleware(): RequestHandler {
@@ -99,13 +106,13 @@ export function loadPrincipal(db: Database): RequestHandler {
           await touchSession(db, session.id, org.sessionIdleMinutesWeb);
         }
 
-        const scope = await resolveScopeFor(db, {
+        const { scope, access } = await resolveScopeDetail(db, {
           userId: user.id,
           role: user.role,
           participantId: user.participantId,
         });
 
-        req.principal = { user, role: user.role, scope, sessionId: session.id, authModel };
+        req.principal = { user, role: user.role, scope, access, sessionId: session.id, authModel };
         req.auditActor = { userId: user.id, ip: req.ip ?? null, deviceId: null };
 
         next();
@@ -144,6 +151,24 @@ export function requireAuth(options: { allowPending?: boolean } = {}): RequestHa
       }
     }
 
+    next();
+  };
+}
+
+/**
+ * Guards on a capability from @vigilo/shared rather than a hand-written role
+ * list, so the API and the UI cannot disagree about who may do what.
+ *
+ * This is the role half of the check only. Whether the participant is in scope
+ * is a separate question, answered by the scope layer, and both always apply.
+ */
+export function requireCapability(can: (role: Role) => boolean, message: string): RequestHandler {
+  return (req, _res, next) => {
+    const principal = currentPrincipal(req);
+    if (!can(principal.role)) {
+      next(new HttpError('scope_denied', message));
+      return;
+    }
     next();
   };
 }

@@ -1,8 +1,10 @@
 import { and, eq, isNull, or, gt } from 'drizzle-orm';
 import {
+  isAssignmentEffective,
   resolveScope,
   scopeAllows,
   type Assignment,
+  type ParticipantAccess,
   type Role,
   type Scope,
   type TeamScope,
@@ -26,21 +28,43 @@ export type ScopePrincipal = {
   participantId: string | null;
 };
 
+/**
+ * The scope plus how the principal reaches each participant, so the UI can
+ * badge a temporary grant with the time left on it (doc 06 §4.1). Both come
+ * from the same query, because a scope and an explanation of that scope that
+ * disagree would be worse than no explanation.
+ */
+export type ScopeDetail = {
+  scope: Scope;
+  access: Map<string, ParticipantAccess>;
+};
+
 export async function resolveScopeFor(
   db: Database,
   principal: ScopePrincipal,
   now = new Date(),
 ): Promise<Scope> {
+  return (await resolveScopeDetail(db, principal, now)).scope;
+}
+
+export async function resolveScopeDetail(
+  db: Database,
+  principal: ScopePrincipal,
+  now = new Date(),
+): Promise<ScopeDetail> {
   // An admin is not limited to a list, so there is nothing to load.
   if (principal.role === 'admin') {
-    return resolveScope(
-      { role: principal.role, ownParticipantId: null, assignments: [], teamScopes: [] },
-      now,
-    );
+    return {
+      scope: resolveScope(
+        { role: principal.role, ownParticipantId: null, assignments: [], teamScopes: [] },
+        now,
+      ),
+      access: new Map(),
+    };
   }
 
   if (principal.role === 'participant') {
-    return resolveScope(
+    const scope = resolveScope(
       {
         role: principal.role,
         ownParticipantId: principal.participantId,
@@ -49,6 +73,11 @@ export async function resolveScopeFor(
       },
       now,
     );
+    const access = new Map<string, ParticipantAccess>();
+    if (principal.participantId !== null) {
+      access.set(principal.participantId, { kind: 'self', expiresAt: null });
+    }
+    return { scope, access };
   }
 
   const assignmentRows = await db
@@ -93,7 +122,7 @@ export async function resolveScopeFor(
     }));
   }
 
-  return resolveScope(
+  const scope = resolveScope(
     {
       role: principal.role,
       ownParticipantId: principal.participantId,
@@ -102,6 +131,25 @@ export async function resolveScopeFor(
     },
     now,
   );
+
+  // Oversight first, then a standing assignment, then a temporary grant. The
+  // least conditional route to the record is the one worth showing.
+  const access = new Map<string, ParticipantAccess>();
+  for (const assignment of assignments) {
+    if (!isAssignmentEffective(assignment, now)) continue;
+    const existing = access.get(assignment.participantId);
+    if (existing && existing.kind === 'standing') continue;
+    access.set(assignment.participantId, {
+      kind: assignment.kind,
+      expiresAt: assignment.expiresAt?.toISOString() ?? null,
+    });
+  }
+  for (const teamScope of scopes) {
+    if (teamScope.revokedAt !== null && teamScope.revokedAt <= now) continue;
+    access.set(teamScope.participantId, { kind: 'team', expiresAt: null });
+  }
+
+  return { scope, access };
 }
 
 /**

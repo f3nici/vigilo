@@ -153,7 +153,7 @@ describe('what gets audited', () => {
   });
 
   it('records a participant view, batched per 15 minutes', async () => {
-    const participantId = await seedParticipant(h.ownerDb);
+    const participantId = await seedParticipant(h.ownerDb, h.keyRing);
     const worker = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
     await assign(h.ownerDb, worker.id, participantId);
 

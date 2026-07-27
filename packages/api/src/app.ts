@@ -11,6 +11,7 @@ import { healthRoutes } from './routes/health.js';
 import { authRoutes } from './routes/auth.js';
 import { userRoutes } from './routes/users.js';
 import { participantRoutes } from './routes/participants.js';
+import { assignmentRoutes } from './routes/assignments.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
 import { auditActorMiddleware, csrfProtection, loadPrincipal } from './middleware/principal.js';
 
@@ -73,7 +74,8 @@ export function createApp(config: Config, logger: Logger, db: Database, keyRing:
   app.use('/api/v1', loadPrincipal(db), csrfProtection());
   app.use('/api/v1/auth', authRoutes(db, config, keyRing));
   app.use('/api/v1/users', userRoutes(db));
-  app.use('/api/v1/participants', participantRoutes(db));
+  app.use('/api/v1/participants', participantRoutes(db, keyRing));
+  app.use('/api/v1/assignments', assignmentRoutes(db));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -19,12 +19,13 @@ import {
 } from 'drizzle-orm/pg-core';
 
 /**
- * Schema through Phase 1 (doc 03).
+ * Schema through Phase 2 (doc 03).
  *
- * Participants exist here as a skeleton only: users.participant_id and
- * participant_assignments both reference it, and the scope resolver cannot be
- * tested without it. Phase 2 adds the encrypted detail columns, alerts,
- * contacts, emergency plans and the CRUD around them.
+ * `revision` on a syncable table is fed by one global sequence through a
+ * trigger, not by the column default and not by the application. It is what
+ * sync cursors walk in Phase 5, so it has to be monotonic across every table
+ * at once (doc 03 conventions). The `.default(0)` below only keeps the insert
+ * types convenient; the trigger overwrites it on every insert and update.
  */
 
 /** citext, so email uniqueness is case-insensitive without a functional index. */
@@ -52,6 +53,15 @@ export const userStatusEnum = pgEnum('user_status', ['active', 'suspended', 'arc
 export const participantStatusEnum = pgEnum('participant_status', ['active', 'archived']);
 export const platformEnum = pgEnum('device_platform', ['android', 'ios', 'web']);
 export const assignmentKindEnum = pgEnum('assignment_kind', ['standing', 'temporary']);
+export const alertKindEnum = pgEnum('alert_kind', [
+  'allergy',
+  'medical',
+  'behavioural',
+  'communication',
+  'other',
+]);
+export const alertSeverityEnum = pgEnum('alert_severity', ['info', 'warning', 'critical']);
+export const scopeChangeEffectEnum = pgEnum('scope_change_effect', ['granted', 'revoked']);
 
 /** Single row, id always 1. Drives every window and "daily" calculation. */
 export const orgSettings = pgTable(
@@ -87,22 +97,47 @@ export const jobRuns = pgTable('job_runs', {
 export type JobRun = typeof jobRuns.$inferSelect;
 
 /**
- * Phase 2 fills this out. Phase 1 needs the table to exist because identity
- * and access both point at it.
+ * The participant record (doc 03 §3).
+ *
+ * Every identifying field is ciphertext. Listing means decrypting names row by
+ * row, which is fine at 200 participants and is the reason there is no
+ * server-side free-text name search: the blind indexes allow exact match only.
  */
-export const participants = pgTable('participants', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  firstNameEnc: encrypted('first_name_enc'),
-  lastNameEnc: encrypted('last_name_enc'),
-  nameSearchBidx: encrypted('name_search_bidx'),
-  status: participantStatusEnum('status').notNull().default('active'),
-  archivedAt: timestamp('archived_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  revision: bigint('revision', { mode: 'number' }).notNull().default(0),
-});
+export const participants = pgTable(
+  'participants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    firstNameEnc: encrypted('first_name_enc').notNull(),
+    lastNameEnc: encrypted('last_name_enc').notNull(),
+    preferredNameEnc: encrypted('preferred_name_enc'),
+    /** HMAC of the lowercased surname. Exact match only, never a prefix. */
+    nameSearchBidx: encrypted('name_search_bidx').notNull(),
+    dobEnc: encrypted('dob_enc').notNull(),
+    ndisNumberEnc: encrypted('ndis_number_enc').notNull(),
+    /** Unique, which is what stops the same person being added twice. */
+    ndisNumberBidx: encrypted('ndis_number_bidx').notNull(),
+    addressEnc: encrypted('address_enc'),
+    phoneEnc: encrypted('phone_enc'),
+    emailEnc: encrypted('email_enc'),
+    /** General admin notes. Clinical detail belongs in the diary. */
+    notesEnc: encrypted('notes_enc'),
+    status: participantStatusEnum('status').notNull().default('active'),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+    createdBy: uuid('created_by'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    uniqueIndex('participants_ndis_bidx_key').on(table.ndisNumberBidx),
+    index('participants_name_bidx_idx').on(table.nameSearchBidx),
+    index('participants_status_idx').on(table.status),
+    index('participants_revision_idx').on(table.revision),
+  ],
+);
 
 export type Participant = typeof participants.$inferSelect;
+export type NewParticipant = typeof participants.$inferInsert;
 
 export const users = pgTable(
   'users',
@@ -269,6 +304,112 @@ export const participantAssignments = pgTable(
     ),
     index('assignments_user_idx').on(table.userId),
     index('assignments_participant_idx').on(table.participantId),
+  ],
+);
+
+/**
+ * High-visibility flags pinned above every screen for that participant
+ * (doc 03 §3). Severity drives colour and nothing else: it says how urgently a
+ * human should read this, never whether a recorded value is good or bad.
+ */
+export const participantAlerts = pgTable(
+  'participant_alerts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    kind: alertKindEnum('kind').notNull(),
+    severity: alertSeverityEnum('severity').notNull(),
+    textEnc: encrypted('text_enc').notNull(),
+    sortOrder: smallint('sort_order').notNull().default(0),
+    active: boolean('active').notNull().default(true),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('participant_alerts_participant_idx').on(table.participantId),
+    index('participant_alerts_revision_idx').on(table.revision),
+  ],
+);
+
+export type ParticipantAlertRow = typeof participantAlerts.$inferSelect;
+
+export const emergencyContacts = pgTable(
+  'emergency_contacts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    nameEnc: encrypted('name_enc').notNull(),
+    relationshipEnc: encrypted('relationship_enc').notNull(),
+    phonePrimaryEnc: encrypted('phone_primary_enc').notNull(),
+    phoneSecondaryEnc: encrypted('phone_secondary_enc'),
+    emailEnc: encrypted('email_enc'),
+    isPrimary: boolean('is_primary').notNull().default(false),
+    sortOrder: smallint('sort_order').notNull().default(0),
+    notesEnc: encrypted('notes_enc'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('emergency_contacts_participant_idx').on(table.participantId),
+    index('emergency_contacts_revision_idx').on(table.revision),
+  ],
+);
+
+export type EmergencyContactRow = typeof emergencyContacts.$inferSelect;
+
+/** One per participant, and it must be readable offline at all times. */
+export const emergencyPlans = pgTable(
+  'emergency_plans',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    bodyEnc: encrypted('body_enc').notNull(),
+    updatedBy: uuid('updated_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    unique('emergency_plans_participant_key').on(table.participantId),
+    index('emergency_plans_revision_idx').on(table.revision),
+  ],
+);
+
+export type EmergencyPlanRow = typeof emergencyPlans.$inferSelect;
+
+/**
+ * How a device learns to download or purge a participant (doc 03 §11).
+ *
+ * Written whenever an assignment is granted or revoked. Phase 5 reads it; it is
+ * written from here because the assignment service is the only place that knows
+ * a scope actually changed, and reconstructing that later from history is
+ * guesswork.
+ */
+export const syncScopeChanges = pgTable(
+  'sync_scope_changes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    participantId: uuid('participant_id').notNull(),
+    effect: scopeChangeEffectEnum('effect').notNull(),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('sync_scope_changes_user_idx').on(table.userId),
+    index('sync_scope_changes_revision_idx').on(table.revision),
   ],
 );
 

@@ -8,7 +8,7 @@ import { loadConfig, type Config } from '../src/config.js';
 import { createLogger } from '../src/logger.js';
 import { createDatabase, type Database } from '../src/db/client.js';
 import { provisionAppRole, runMigrations } from '../src/db/migrate.js';
-import { KeyRing } from '../src/crypto/keys.js';
+import { blindIndex, KeyRing } from '../src/crypto/keys.js';
 import { hashPassword } from '../src/crypto/passwords.js';
 import { encryptField } from '../src/crypto/fields.js';
 import { generateTotpSecret } from '../src/services/totp.js';
@@ -98,8 +98,12 @@ export async function resetData(ownerDb: Database): Promise<void> {
       sessions,
       recovery_codes,
       devices,
+      sync_scope_changes,
       participant_assignments,
       team_scopes,
+      participant_alerts,
+      emergency_contacts,
+      emergency_plans,
       users,
       participants
     restart identity cascade
@@ -215,8 +219,34 @@ export function currentTotpCode(secret: string): string {
   }).generate();
 }
 
-export async function seedParticipant(ownerDb: Database): Promise<string> {
-  const [row] = await ownerDb.insert(participants).values({}).returning();
+let ndisCounter = 100000000;
+
+/**
+ * A participant record straight into the database, encrypted the same way the
+ * service would. Tests that are about scope should not have to walk the whole
+ * create flow to get someone to be out of scope of.
+ */
+export async function seedParticipant(
+  ownerDb: Database,
+  keyRing: KeyRing,
+  options: { firstName?: string; lastName?: string; ndisNumber?: string } = {},
+): Promise<string> {
+  const firstName = options.firstName ?? 'Test';
+  const lastName = options.lastName ?? 'Participant';
+  const ndisNumber = options.ndisNumber ?? String(++ndisCounter);
+
+  const [row] = await ownerDb
+    .insert(participants)
+    .values({
+      firstNameEnc: encryptField(keyRing, 'participants.first_name_enc', firstName),
+      lastNameEnc: encryptField(keyRing, 'participants.last_name_enc', lastName),
+      nameSearchBidx: blindIndex(keyRing, 'participants.name_search_bidx', lastName),
+      dobEnc: encryptField(keyRing, 'participants.dob_enc', '1990-01-01'),
+      ndisNumberEnc: encryptField(keyRing, 'participants.ndis_number_enc', ndisNumber),
+      ndisNumberBidx: blindIndex(keyRing, 'participants.ndis_number_bidx', ndisNumber),
+    })
+    .returning();
+
   return row!.id;
 }
 
