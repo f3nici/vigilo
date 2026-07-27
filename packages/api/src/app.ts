@@ -1,14 +1,20 @@
 import express, { type Express } from 'express';
 import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 import { pinoHttp } from 'pino-http';
 import { randomUUID } from 'node:crypto';
 import type { Config } from './config.js';
 import type { Logger } from './logger.js';
 import type { Database } from './db/client.js';
+import type { KeyRing } from './crypto/keys.js';
 import { healthRoutes } from './routes/health.js';
+import { authRoutes } from './routes/auth.js';
+import { userRoutes } from './routes/users.js';
+import { participantRoutes } from './routes/participants.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
+import { auditActorMiddleware, csrfProtection, loadPrincipal } from './middleware/principal.js';
 
-export function createApp(config: Config, logger: Logger, db: Database): Express {
+export function createApp(config: Config, logger: Logger, db: Database, keyRing: KeyRing): Express {
   const app = express();
 
   app.disable('x-powered-by');
@@ -16,6 +22,7 @@ export function createApp(config: Config, logger: Logger, db: Database): Express
 
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(express.json({ limit: '1mb' }));
+  app.use(cookieParser());
 
   app.use(
     pinoHttp({
@@ -56,7 +63,17 @@ export function createApp(config: Config, logger: Logger, db: Database): Express
     next();
   });
 
+  app.use(auditActorMiddleware());
+
+  // Health is deliberately outside auth and outside the principal lookup.
   app.use('/api', healthRoutes(db, config.BUILD_HASH));
+
+  // Everything below resolves a principal first, so no route ever works out
+  // who is calling for itself.
+  app.use('/api/v1', loadPrincipal(db), csrfProtection());
+  app.use('/api/v1/auth', authRoutes(db, config, keyRing));
+  app.use('/api/v1/users', userRoutes(db));
+  app.use('/api/v1/participants', participantRoutes(db));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

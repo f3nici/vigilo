@@ -6,6 +6,8 @@ import { loadConfig } from '../src/config.js';
 import { createLogger } from '../src/logger.js';
 import { createDatabase } from '../src/db/client.js';
 import { runMigrations } from '../src/db/migrate.js';
+import { KeyRing } from '../src/crypto/keys.js';
+import { MASTER_KEY } from './helpers.js';
 
 /**
  * Integration test against a real Postgres. CI provides one as a service
@@ -21,6 +23,7 @@ beforeAll(async () => {
   const config = loadConfig({
     NODE_ENV: 'test',
     DATABASE_URL: databaseUrl,
+    MASTER_KEY,
     LOG_LEVEL: 'silent',
     BUILD_HASH: 'test-build',
     MIGRATE_ON_START: 'false',
@@ -30,7 +33,7 @@ beforeAll(async () => {
   const { db, sql } = createDatabase(databaseUrl);
   await runMigrations(db);
 
-  app = createApp(config, logger, db);
+  app = createApp(config, logger, db, KeyRing.fromEnv(MASTER_KEY));
   close = async () => {
     await sql.end();
   };

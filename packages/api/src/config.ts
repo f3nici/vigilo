@@ -4,38 +4,87 @@ import { z } from 'zod';
  * Environment is parsed once at startup and fails loudly. A misconfigured
  * container should refuse to start, not serve half a product.
  */
-const envSchema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().int().positive().default(3000),
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
+const envSchema = z
+  .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    PORT: z.coerce.number().int().positive().default(3000),
 
-  /** Set by CI to the commit sha. Reported by /api/health as the build hash. */
-  BUILD_HASH: z.string().default('dev'),
+    /**
+     * What the API uses to serve requests. In a real deployment this is the
+     * restricted `vigilo_app` role, which has no UPDATE or DELETE on the audit
+     * log (doc 07 §4).
+     */
+    DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
-  /**
-   * Capacitor apps sign in from https://localhost, so the origin has to be
-   * allowed and the session cookie has to be SameSite=None. Built in from the
-   * first deploy rather than discovered during store review (CareLane cost
-   * time on exactly this).
-   */
-  CORS_ORIGINS: z
-    .string()
-    .default('http://localhost:8081,https://localhost')
-    .transform((value) =>
-      value
-        .split(',')
-        .map((origin) => origin.trim())
-        .filter(Boolean),
-    ),
-  SESSION_SAMESITE: z.enum(['lax', 'strict', 'none']).default('lax'),
+    /**
+     * Owner connection, used only to run migrations and provision the app
+     * role. Falls back to DATABASE_URL for local runs where they are the same.
+     */
+    MIGRATE_DATABASE_URL: z.string().min(1).optional(),
 
-  /** Run pending migrations on boot. Off in tests, which manage their own. */
-  MIGRATE_ON_START: z
-    .enum(['true', 'false'])
-    .default('true')
-    .transform((value) => value === 'true'),
-});
+    /**
+     * When both are set, the migration step gives the app role LOGIN and this
+     * password. That is what lets the API connect as a role that cannot
+     * rewrite the audit log.
+     */
+    APP_DB_ROLE: z.string().min(1).default('vigilo_app'),
+    APP_DB_PASSWORD: z.string().min(1).optional(),
+
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+      .default('info'),
+
+    /** Set by CI to the commit sha. Reported by /api/health as the build hash. */
+    BUILD_HASH: z.string().default('dev'),
+
+    /**
+     * Wraps the per-table data keys. Never in the repository, never in the
+     * image, never in a log. `openssl rand -base64 32` generates one, and
+     * `1:<base64>,2:<base64>` carries old versions through a rotation.
+     */
+    MASTER_KEY: z.string().min(1, 'MASTER_KEY is required'),
+
+    /**
+     * Capacitor apps sign in from https://localhost, so the origin has to be
+     * allowed and the session cookie has to be SameSite=None. Built in from the
+     * first deploy rather than discovered during store review (CareLane cost
+     * time on exactly this).
+     */
+    CORS_ORIGINS: z
+      .string()
+      .default('http://localhost:8081,https://localhost')
+      .transform((value) =>
+        value
+          .split(',')
+          .map((origin) => origin.trim())
+          .filter(Boolean),
+      ),
+    SESSION_SAMESITE: z.enum(['lax', 'strict', 'none']).default('lax'),
+
+    /** Off in development so `docker compose up` works without TLS in front. */
+    SESSION_COOKIE_SECURE: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((value) => value === 'true'),
+
+    /** Installed-app access token lifetime. Refresh tokens rotate (doc 02 §5). */
+    ACCESS_TOKEN_MINUTES: z.coerce.number().int().positive().default(15),
+    REFRESH_TOKEN_DAYS: z.coerce.number().int().positive().default(60),
+
+    /** Lockout after this many consecutive failures (doc 07 §3). */
+    MAX_FAILED_ATTEMPTS: z.coerce.number().int().positive().default(10),
+    LOCKOUT_MINUTES: z.coerce.number().int().positive().default(15),
+
+    /** Run pending migrations on boot. Off in tests, which manage their own. */
+    MIGRATE_ON_START: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((value) => value === 'true'),
+  })
+  .transform((env) => ({
+    ...env,
+    migrateDatabaseUrl: env.MIGRATE_DATABASE_URL ?? env.DATABASE_URL,
+  }));
 
 export type Config = z.infer<typeof envSchema>;
 

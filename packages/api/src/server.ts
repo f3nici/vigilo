@@ -2,26 +2,35 @@ import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { createLogger } from './logger.js';
 import { createDatabase } from './db/client.js';
-import { runMigrations } from './db/migrate.js';
+import { migrateWithOwner } from './db/migrate.js';
+import { KeyRing } from './crypto/keys.js';
+import { startJobs } from './jobs/index.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createLogger(config.LOG_LEVEL);
-  const { db, sql } = createDatabase(config.DATABASE_URL);
 
+  // Fail before listening if the master key is wrong, rather than on the first
+  // request that needs to decrypt something.
+  const keyRing = KeyRing.fromEnv(config.MASTER_KEY);
+
+  // Migrations run as the owner; serving happens as the restricted app role.
   if (config.MIGRATE_ON_START) {
-    logger.info('running migrations');
-    await runMigrations(db);
-    logger.info('migrations up to date');
+    await migrateWithOwner(config);
   }
 
-  const app = createApp(config, logger, db);
+  const { db, sql } = createDatabase(config.DATABASE_URL);
+
+  const app = createApp(config, logger, db, keyRing);
+  const jobs = startJobs(db, logger);
+
   const server = app.listen(config.PORT, () => {
     logger.info({ port: config.PORT, build: config.BUILD_HASH }, 'vigilo api listening');
   });
 
   const shutdown = (signal: string) => {
     logger.info({ signal }, 'shutting down');
+    jobs.stop();
     server.close(() => {
       void sql.end().then(() => process.exit(0));
     });

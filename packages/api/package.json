@@ -8,21 +8,27 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
-    "migrate": "tsx src/db/migrate.ts",
+    "migrate": "node dist/db/migrate.js",
+    "admin": "node dist/cli/admin.js",
     "db:generate": "drizzle-kit generate",
     "test": "vitest run"
   },
   "dependencies": {
+    "@node-rs/argon2": "^2.0.2",
     "@vigilo/shared": "*",
+    "cookie-parser": "^1.4.7",
     "drizzle-orm": "^0.38.3",
     "express": "^5.0.1",
     "helmet": "^8.0.0",
+    "node-cron": "^4.6.0",
+    "otpauth": "^9.5.1",
     "pino": "^9.6.0",
     "pino-http": "^10.4.0",
     "postgres": "^3.4.5",
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.7",
     "@types/supertest": "^6.0.2",
