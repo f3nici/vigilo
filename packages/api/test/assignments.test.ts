@@ -218,6 +218,36 @@ describe('who may grant', () => {
     expect(response.body.error.code).toBe('scope_denied');
   });
 
+  it("keeps one user's assignment list admin-only", async () => {
+    // The guard is on the whole /users router rather than this handler, so it
+    // is worth pinning down: reading it as "who is this worker assigned to"
+    // would otherwise be a way for one worker to enumerate another's caseload.
+    const { admin, api: adminApi, participantId } = await adminWithParticipant();
+
+    const worker = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
+    await adminApi
+      .post(`/api/v1/participants/${participantId}/assignments`)
+      .send({ userId: worker.id, kind: 'standing' });
+
+    const allowed = await adminApi.get(`/api/v1/users/${worker.id}/assignments`);
+    expect(allowed.status).toBe(200);
+    expect(allowed.body.assignments).toHaveLength(1);
+
+    // A worker cannot read anyone's, including their own.
+    const workerApi = as(await signIn(h, worker));
+    for (const target of [worker.id, admin.id]) {
+      const denied = await workerApi.get(`/api/v1/users/${target}/assignments`);
+      expect(denied.status).toBe(403);
+      expect(denied.body.error.code).toBe('scope_denied');
+    }
+
+    // Nor can a team leader, who grants access but does not audit caseloads.
+    const leader = await seedUser(h.ownerDb, h.keyRing, { role: 'team_leader' });
+    const leaderApi = as(await signIn(h, leader));
+    const leaderDenied = await leaderApi.get(`/api/v1/users/${worker.id}/assignments`);
+    expect(leaderDenied.status).toBe(403);
+  });
+
   it('stops a worker granting themselves access, which is the whole point', async () => {
     const { participantId } = await adminWithParticipant();
 
