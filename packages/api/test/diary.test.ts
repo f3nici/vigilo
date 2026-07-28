@@ -656,6 +656,66 @@ describe('attachments', () => {
     expect(response.headers['x-content-type-options']).toBe('nosniff');
   });
 
+  /**
+   * Scope alone is not enough here. A self-access account is always in scope
+   * for its own record, so without the owner's read rule the photo on an entry
+   * marked not visible to them is fetchable straight off `/attachments/:id`,
+   * and the id being a UUID they were never shown is not an access control.
+   */
+  it('hides an attachment on an entry the participant may not read', async () => {
+    const { worker, participantId, categoryId } = await setUp();
+    const visible = await upload(worker, participantId, await photoWithGps());
+    const hidden = await upload(worker, participantId, await photoWithGps());
+
+    for (const [attachment, visibleToParticipant] of [
+      [visible, true],
+      [hidden, false],
+    ] as const) {
+      await api(worker, 'post', `/api/v1/participants/${participantId}/diary`).send({
+        id: randomUUID(),
+        categoryId,
+        body: visibleToParticipant ? 'Shown to Alice.' : 'Not shown to Alice.',
+        occurredAt: new Date().toISOString(),
+        visibleToParticipant,
+        attachmentIds: [attachment.id],
+      });
+    }
+
+    const selfUser = await seedUser(h.ownerDb, h.keyRing, { role: 'participant', participantId });
+    const self = await signIn(h, selfUser);
+
+    expect((await api(self, 'get', `/api/v1/attachments/${visible.id}`)).status).toBe(200);
+
+    // not_found, not scope_denied: the refusal must not confirm it exists.
+    const refused = await api(self, 'get', `/api/v1/attachments/${hidden.id}`);
+    expect(refused.status).toBe(404);
+    expect(refused.body.error.code).toBe('not_found');
+
+    expect((await api(self, 'get', `/api/v1/attachments/${hidden.id}/thumb`)).status).toBe(404);
+    expect((await api(self, 'get', `/api/v1/attachments/${hidden.id}/meta`)).status).toBe(404);
+
+    // Staff see both, which is the point of a staff-only entry.
+    expect((await api(worker, 'get', `/api/v1/attachments/${hidden.id}`)).status).toBe(200);
+  });
+
+  it('hides an attachment on a deleted entry from everyone but an admin', async () => {
+    const { admin, worker, participantId, categoryId } = await setUp();
+    const { id } = await upload(worker, participantId, await photoWithGps());
+
+    const entry = await api(worker, 'post', `/api/v1/participants/${participantId}/diary`).send({
+      id: randomUUID(),
+      categoryId,
+      body: 'Photographed, then the entry was deleted.',
+      occurredAt: new Date().toISOString(),
+      attachmentIds: [id],
+    });
+
+    await api(admin, 'delete', `/api/v1/diary-entries/${entry.body.entry.id}`);
+
+    expect((await api(worker, 'get', `/api/v1/attachments/${id}`)).status).toBe(404);
+    expect((await api(admin, 'get', `/api/v1/attachments/${id}`)).status).toBe(200);
+  });
+
   it('refuses a download to someone out of scope', async () => {
     const { worker, participantId } = await setUp();
     const { id } = await upload(worker, participantId, await photoWithGps());

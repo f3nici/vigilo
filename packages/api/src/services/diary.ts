@@ -182,6 +182,44 @@ function toDiaryEntry(keyRing: KeyRing, row: DiaryEntryRow, context: EntryContex
   };
 }
 
+/**
+ * Whether this caller may read an attachment, beyond being in scope.
+ *
+ * Scope answers "may you touch this participant's record", which for a
+ * self-access account is always yes about themselves. It does not answer "may
+ * you read *this* entry", and a photo hangs off an entry that may be marked not
+ * visible to the participant or soft-deleted.
+ *
+ * Without this, the body of a hidden entry is filtered out of every list and
+ * the photo attached to it is still fetchable at `/attachments/:id`. That the
+ * id is a UUID the participant was never shown is not an access control.
+ *
+ * Answers `not_found` rather than `scope_denied`, matching what reading the
+ * entry itself does, so the refusal does not confirm the attachment exists.
+ */
+export async function assertAttachmentReadable(
+  db: Database,
+  attachment: { ownerType: string; ownerId: string | null },
+  principal: DiaryPrincipal,
+): Promise<void> {
+  if (attachment.ownerType !== 'diary_entry' || attachment.ownerId === null) return;
+
+  const [row] = await db
+    .select()
+    .from(diaryEntries)
+    .where(eq(diaryEntries.id, attachment.ownerId))
+    .limit(1);
+
+  // No owner row means nothing to say beyond what scope already said.
+  if (!row) return;
+
+  const readable = canReadDiaryEntry(
+    { visibleToParticipant: row.visibleToParticipant, deletedAt: row.deletedAt },
+    viewerOf(principal, row.participantId),
+  );
+  if (!readable) throw new HttpError('not_found', 'That attachment does not exist.');
+}
+
 export async function findDiaryEntry(db: Database, entryId: string): Promise<DiaryEntryRow> {
   const [row] = await db.select().from(diaryEntries).where(eq(diaryEntries.id, entryId)).limit(1);
   if (!row) throw new HttpError('not_found', 'That diary entry does not exist.');

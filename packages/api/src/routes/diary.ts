@@ -20,6 +20,7 @@ import {
 import type { Database } from '../db/client.js';
 import type { KeyRing } from '../crypto/keys.js';
 import {
+  assertAttachmentReadable,
   createCategory,
   createDiaryEntry,
   deleteDiaryEntry,
@@ -275,11 +276,20 @@ export function attachmentRoutes(db: Database, keyRing: KeyRing, store: FileStor
 
   router.use(requireAuth());
 
+  /**
+   * Scope, then the owning entry's own read rule.
+   *
+   * Both are needed. Scope says whether this participant's record is yours to
+   * touch, which for a self-access account is always yes about themselves; it
+   * says nothing about an entry marked not visible to them, and a photo hangs
+   * off an entry.
+   */
   async function scopedAttachment(req: Request) {
     const principal = currentPrincipal(req);
     const { id } = idSchema.parse(req.params);
     const row = await findAttachment(db, id);
     assertInScope(principal.scope, row.participantId);
+    await assertAttachmentReadable(db, row, diaryPrincipal(req));
     return row;
   }
 
