@@ -78,6 +78,20 @@
       "when": 1785228983917,
       "tag": "0010_diary_triggers_and_categories",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785248805671,
+      "tag": "0011_sync_and_push",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785248805672,
+      "tag": "0012_sync_triggers",
+      "breakpoints": true
     }
   ]
 }

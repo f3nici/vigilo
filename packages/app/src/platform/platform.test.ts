@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getPlatform, isInstalled, PlatformNotImplementedError } from './index.js';
+import { getPlatform, isInstalled } from './index.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -7,7 +7,7 @@ afterEach(() => {
 });
 
 describe('getPlatform', () => {
-  it('returns the web adapters, which is all Phase 0 ships', () => {
+  it('returns the web adapters, which is all the PWA has', () => {
     const platform = getPlatform();
     expect(platform.name).toBe('web');
     expect(platform.storage).toBeDefined();
@@ -23,7 +23,16 @@ describe('WebStorage', () => {
 
   it('reports OPFS as available when the browser has it', () => {
     vi.stubGlobal('navigator', { storage: { getDirectory: () => Promise.resolve({}) } });
+    // A worker as well as OPFS: Safari only hands synchronous access handles
+    // to a worker, so OPFS on its own is not enough to open the database.
+    vi.stubGlobal('Worker', class {});
     expect(getPlatform().storage.isAvailable()).toBe(true);
+  });
+
+  it('reports it unavailable without a worker, even with OPFS', () => {
+    vi.stubGlobal('navigator', { storage: { getDirectory: () => Promise.resolve({}) } });
+    vi.stubGlobal('Worker', undefined);
+    expect(getPlatform().storage.isAvailable()).toBe(false);
   });
 
   it('returns false rather than throwing when persist is refused', async () => {
@@ -33,8 +42,13 @@ describe('WebStorage', () => {
     await expect(getPlatform().storage.requestPersistence()).resolves.toBe(false);
   });
 
-  it('defers the local database to Phase 5 with a clear error', async () => {
-    await expect(getPlatform().storage.open()).rejects.toBeInstanceOf(PlatformNotImplementedError);
+  it('explains why the local database is unavailable rather than throwing', async () => {
+    // A browser with no OPFS is a normal situation with something sensible to
+    // say about it, not an exception for a caller to catch.
+    const result = await getPlatform().storage.open();
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.reason).toBe('unsupported');
+    expect(result.ok === false && result.detail.length).toBeGreaterThan(0);
   });
 });
 
@@ -43,10 +57,13 @@ describe('WebSecureStore', () => {
     await expect(getPlatform().secureStore.isAvailable()).resolves.toBe(false);
   });
 
-  it('defers token storage to Phase 5', async () => {
-    await expect(getPlatform().secureStore.get('refresh')).rejects.toBeInstanceOf(
-      PlatformNotImplementedError,
-    );
+  it('refuses to seal anything before an unlock', async () => {
+    await expect(getPlatform().secureStore.seal('anything')).rejects.toThrow('locked');
+  });
+
+  it('is not unlocked before anybody has unlocked it', () => {
+    expect(getPlatform().secureStore.isUnlocked()).toBe(false);
+    expect(getPlatform().secureStore.method()).toBeNull();
   });
 });
 
@@ -54,6 +71,12 @@ describe('WebPush', () => {
   it('reports unsupported without a service worker and PushManager', () => {
     expect(getPlatform().push.isSupported()).toBe(false);
     expect(getPlatform().push.permission()).toBe('unsupported');
+  });
+
+  it('returns null rather than throwing when there is nothing to subscribe to', async () => {
+    // No support, no permission and no VAPID key are all ordinary states, and
+    // none of them should stop a worker recording a check.
+    await expect(getPlatform().push.subscribe('a-key')).resolves.toBeNull();
   });
 });
 

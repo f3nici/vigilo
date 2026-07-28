@@ -8,6 +8,7 @@ import { KeyRing } from '../crypto/keys.js';
 import { users } from '../db/schema.js';
 import { generateOneTimePassword, hashPassword } from '../crypto/passwords.js';
 import { recordAudit, verifyAuditChain, type AuditActor } from '../services/audit.js';
+import { generateVapidKeys } from '../services/push.js';
 import { revokeAllForUser } from '../services/auth.js';
 import { countActiveAdmins } from '../services/users.js';
 import { requestDeviceWipe } from '../services/devices.js';
@@ -131,6 +132,7 @@ Commands:
   admin:list
   admin:revoke-sessions  --email <email> --confirm
   audit:verify
+  push:generate-keys
 
 Every invocation is written to the audit log. This tool cannot read or export
 participant data.
@@ -352,6 +354,22 @@ async function run(db: Database, args: Args): Promise<number> {
       out();
       out('Treat this as a possible tampering incident. Do not clear it.');
       return 2;
+    }
+
+    case 'push:generate-keys': {
+      // No audit row and no database write. This generates a pair and prints
+      // it; nothing is stored until an operator puts it in the environment,
+      // and the private half must not end up in a log or a table.
+      const keys = generateVapidKeys();
+      out('Add these to the API environment, then restart it:');
+      out();
+      out(`VAPID_PUBLIC_KEY=${keys.publicKey}`);
+      out(`VAPID_PRIVATE_KEY=${keys.privateKey}`);
+      out('VAPID_SUBJECT=mailto:you@example.com');
+      out();
+      out('Keep the private key out of the repository and out of the image.');
+      out('Changing it invalidates every existing push subscription.');
+      return 0;
     }
 
     case 'help':

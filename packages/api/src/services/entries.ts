@@ -40,7 +40,7 @@ import {
   MISS_NOTE_COLUMN,
   VALUE_TEXT_COLUMN,
   recomputeWindowStatus,
-  toCheckValue,
+  toCheckEntry,
 } from './windows.js';
 import { getOrgSettings } from './org.js';
 import { recordAudit, type AuditActor } from './audit.js';
@@ -145,41 +145,14 @@ async function currentValues(db: Database, entryId: string): Promise<CheckEntryV
     .orderBy(asc(checkEntryValues.fieldKey));
 }
 
-async function toEntry(db: Database, keyRing: KeyRing, row: CheckEntryRow): Promise<CheckEntry> {
-  const values = await currentValues(db, row.id);
-  const [recorder] = row.recordedBy
-    ? await db
-        .select({ displayName: users.displayName })
-        .from(users)
-        .where(eq(users.id, row.recordedBy))
-        .limit(1)
-    : [];
-
-  return {
-    id: row.id,
-    windowId: row.windowId,
-    participantId: row.participantId,
-    templateVersionId: row.templateVersionId,
-    recordedBy: row.recordedBy,
-    recordedByName: recorder?.displayName ?? null,
-    recordedAt: row.recordedAt.toISOString(),
-    receivedAt: row.receivedAt.toISOString(),
-    status: row.status,
-    isLate: row.isLate,
-    editedAt: row.editedAt?.toISOString() ?? null,
-    editCount: row.editCount,
-    values: values.map((value) => toCheckValue(keyRing, value)),
-  };
-}
-
 async function assertBackfillAllowed(
   db: Database,
   window: CheckWindowRow,
   principal: EntryPrincipal,
-  now: Date,
+  at: Date,
 ): Promise<void> {
   const org = await getOrgSettings(db);
-  if (!backfillNeedsApproval(window.endsAt, now, org.lateEntryCutoffMinutes)) return;
+  if (!backfillNeedsApproval(window.endsAt, at, org.lateEntryCutoffMinutes)) return;
   if (canBackfillPastCutoff(principal.role)) return;
 
   const hours = Math.round(org.lateEntryCutoffMinutes / 60);
@@ -188,6 +161,15 @@ async function assertBackfillAllowed(
     `This window closed more than ${hours} hours ago. A team leader or nurse can still record it.`,
   );
 }
+
+export type PutEntryOptions = {
+  /**
+   * True when this arrived through the outbox rather than from somebody
+   * looking at the form. Only affects which instant the back-fill cutoff is
+   * measured from.
+   */
+  recordedOffline?: boolean;
+};
 
 /**
  * Upsert by client-supplied id (doc 04 §7).
@@ -209,6 +191,7 @@ export async function putEntry(
   request: PutEntryRequest,
   principal: EntryPrincipal,
   actor: AuditActor,
+  options: PutEntryOptions = {},
 ): Promise<{ entry: CheckEntry; window: CheckWindowRow }> {
   const now = new Date();
 
@@ -246,7 +229,21 @@ export async function putEntry(
     );
   }
 
-  if (!existing) await assertBackfillAllowed(db, window, principal, now);
+  /*
+   * The back-fill cutoff asks "is somebody typing in a check that happened
+   * days ago", which is a question about when the worker was standing there,
+   * not about when the record reached us.
+   *
+   * A phone that was in a house with no signal for two days recorded these at
+   * the time and is only now able to send them. Judging those by server time
+   * would refuse exactly the records offline support exists to protect
+   * (doc 05 §9), so sync passes the device's own recorded time and the
+   * interactive route passes now. Device time is not trusted for anything
+   * else: lateness still comes from the server clock, and the gap between
+   * recorded and received is visible on the record (D46).
+   */
+  const backfillAt = options.recordedOffline ? new Date(request.recordedAt) : now;
+  if (!existing) await assertBackfillAllowed(db, window, principal, backfillAt);
 
   const late = isLate(window.endsAt, now);
 
@@ -338,7 +335,7 @@ export async function putEntry(
     },
   });
 
-  return { entry: await toEntry(db, keyRing, entry), window: updatedWindow };
+  return { entry: await toCheckEntry(db, keyRing, entry), window: updatedWindow };
 }
 
 /**
@@ -467,7 +464,7 @@ export async function editEntry(
     .where(eq(checkEntries.id, entryId))
     .limit(1);
 
-  return { entry: await toEntry(db, keyRing, updated!), window };
+  return { entry: await toCheckEntry(db, keyRing, updated!), window };
 }
 
 /** The edit history, oldest first. Append-only, so this is the whole story. */

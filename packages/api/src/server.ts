@@ -6,6 +6,7 @@ import { migrateWithOwner } from './db/migrate.js';
 import { KeyRing } from './crypto/keys.js';
 import { startJobs } from './jobs/index.js';
 import { createFileStore } from './services/storage.js';
+import { vapidKeys } from './services/vapid.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -26,7 +27,7 @@ async function main(): Promise<void> {
   const { db, sql } = createDatabase(config.DATABASE_URL);
 
   const app = createApp(config, logger, db, keyRing);
-  const jobs = startJobs(db, logger);
+  const jobs = startJobs(db, logger, keyRing, vapidKeys(config));
 
   const server = app.listen(config.PORT, () => {
     logger.info({ port: config.PORT, build: config.BUILD_HASH }, 'vigilo api listening');

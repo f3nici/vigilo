@@ -7,6 +7,20 @@
     <meta name="theme-color" content="#0F6E6E" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#141311" media="(prefers-color-scheme: dark)" />
     <title>Vigilo</title>
+
+    <!--
+      Only the latin subset is preloaded. It covers everything on screen for
+      almost every user, and preloading the other two would pull 95 KB on a
+      phone in a house with one bar to cover characters most orgs never type.
+      They still load on demand, from our origin.
+    -->
+    <link
+      rel="preload"
+      href="/fonts/inter-v20-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <script>
       // Set the theme before first paint. Overnight checks happen at 2am next
       // to a sleeping person, so a white flash is a real problem (doc 08 §3).
@@ -22,6 +36,198 @@
         }
       })();
     </script>
+
+    <!-- The PWA. Android reads the manifest; iOS reads the meta tags below. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
+
+    <!--
+      iOS ignores most of the manifest. Without these three the app opens in a
+      Safari tab from the home screen, with a URL bar, and with no push at all.
+    -->
+    <!--
+      Both spellings. Chrome deprecated the apple- prefix in favour of the
+      unprefixed one, and Safari only understands the prefixed one, so an
+      installed app needs each of them to open without a URL bar.
+    -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Vigilo" />
+    <!-- Opaque and unrounded: iOS rounds it, and a pre-rounded icon is rounded twice. -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.png" sizes="180x180" />
+
+    <!--
+      Startup images, so an installed app on iOS does not show a blank white
+      screen while it starts. They are dark on purpose: this gets opened at 2am
+      beside somebody who is asleep, which is the same reason the script above
+      sets the theme before first paint.
+    -->
+    <!-- SE, 8 -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-750x1334.png"
+      media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-1334x750.png"
+      media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)"
+    />
+    <!-- 11, XR -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-828x1792.png"
+      media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-1792x828.png"
+      media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)"
+    />
+    <!-- X, XS, 11 Pro -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-1125x2436.png"
+      media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2436x1125.png"
+      media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)"
+    />
+    <!-- XS Max, 11 Pro Max -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-1242x2688.png"
+      media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2688x1242.png"
+      media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)"
+    />
+    <!-- 12, 13, 14 -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-1170x2532.png"
+      media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2532x1170.png"
+      media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)"
+    />
+    <!-- 14 Pro, 15, 16 -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-1179x2556.png"
+      media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2556x1179.png"
+      media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)"
+    />
+    <!-- 16 Pro -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-1206x2622.png"
+      media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2622x1206.png"
+      media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)"
+    />
+    <!-- 12/13 Pro Max, 14 Plus -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-1284x2778.png"
+      media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2778x1284.png"
+      media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)"
+    />
+    <!-- 14/15/16 Pro Max -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-1290x2796.png"
+      media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2796x1290.png"
+      media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)"
+    />
+    <!-- 16 Pro Max -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-1320x2868.png"
+      media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2868x1320.png"
+      media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: landscape)"
+    />
+    <!-- iPad 9.7 -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-1536x2048.png"
+      media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2048x1536.png"
+      media="(device-width: 768px) and (device-height: 1024px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)"
+    />
+    <!-- iPad 10.2 -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-1620x2160.png"
+      media="(device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2160x1620.png"
+      media="(device-width: 810px) and (device-height: 1080px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)"
+    />
+    <!-- iPad Pro 10.5 -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-1668x2224.png"
+      media="(device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2224x1668.png"
+      media="(device-width: 834px) and (device-height: 1112px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)"
+    />
+    <!-- iPad Pro 11 -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-1668x2388.png"
+      media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2388x1668.png"
+      media="(device-width: 834px) and (device-height: 1194px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)"
+    />
+    <!-- iPad Pro 12.9 -->
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/portrait-2048x2732.png"
+      media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)"
+    />
+    <link
+      rel="apple-touch-startup-image"
+      href="/splash/landscape-2732x2048.png"
+      media="(device-width: 1024px) and (device-height: 1366px) and (-webkit-device-pixel-ratio: 2) and (orientation: landscape)"
+    />
   </head>
   <body>
     <div id="app"></div>

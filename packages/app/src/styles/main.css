@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@import './fonts.css';
 
 /*
  * Design tokens from doc 08 §3.
@@ -105,8 +106,16 @@
   --color-cat-rose: var(--vigilo-cat-rose);
   --color-cat-slate: var(--vigilo-cat-slate);
 
-  --font-sans:
-    'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /*
+   * The family name is plain 'Inter': that is what fonts.css declares. The old
+   * 'Inter var' name belongs to a distribution we do not ship, and naming a
+   * face that does not exist just costs a lookup.
+   *
+   * After that, each platform's own UI font rather than a single named
+   * fallback, so the half second before Inter arrives looks native instead of
+   * looking wrong. system-ui resolves to Roboto on Android and SF Pro on iOS.
+   */
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
   /* Doc 08 §4. Body is 16px minimum on mobile, never below 14px anywhere. */
   --text-xs: 0.75rem;

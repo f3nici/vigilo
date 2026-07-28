@@ -29,7 +29,7 @@ import { HttpError } from '../middleware/errors.js';
  */
 
 /** The AAD for each encrypted column. Must match between write and read. */
-const COLUMN = {
+export const COLUMN = {
   firstName: 'participants.first_name_enc',
   lastName: 'participants.last_name_enc',
   preferredName: 'participants.preferred_name_enc',

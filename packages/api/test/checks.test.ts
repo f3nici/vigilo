@@ -614,7 +614,10 @@ describe('checks', () => {
     /** A window that closed yesterday, so lateness is real rather than mocked. */
     async function closedWindow(): Promise<Fixture & { windowId: string; endsAt: string }> {
       const fixture = await setUp();
-      const yesterday = addDays(today(), -1);
+      // Three days back, not yesterday. The back-fill cut-off is 24 hours, and
+      // "yesterday" is under an hour ago when the suite runs just after
+      // midnight, which made this pass or fail on the time of day.
+      const yesterday = addDays(today(), -3);
 
       await api(
         fixture.admin,
@@ -1168,8 +1171,30 @@ describe('checks', () => {
       expect(weekend?.status).toBe('not_expected');
       expect(weekend?.coverageReason).toBe('Outside supported hours');
 
-      // A missed one from yesterday, needing a reason.
-      const missed = windows.find((one) => one.status === 'missed');
+      // A missed one, needing a reason.
+      //
+      // Aged deliberately rather than picked out of whatever the clock happens
+      // to have closed: a coverage pattern applies from the day it is set
+      // (D38), so yesterday's windows are never expected here, and relying on
+      // an earlier window from today means no missed window exists at all when
+      // the suite runs just after midnight.
+      const expectedToday = windows.find((one) => one.expected && one.status === 'pending');
+      expect(expectedToday).toBeDefined();
+      await h.ownerDb.execute(sql`
+        update check_windows
+        set starts_at = now() - interval '3 hours', ends_at = now() - interval '2 hours'
+        where id = ${expectedToday!.id}::uuid
+      `);
+      await closeWindows(h.db);
+
+      const reread = await api(
+        worker,
+        'get',
+        `/api/v1/participants/${participantId}/windows?from=${yesterday}&to=${addDays(today(), 7)}`,
+      );
+      const missed = (reread.body.windows as { id: string; status: string }[]).find(
+        (one) => one.status === 'missed',
+      );
       expect(missed).toBeDefined();
 
       const codes = await api(worker, 'get', '/api/v1/missed-reason-codes');
@@ -1181,9 +1206,9 @@ describe('checks', () => {
       });
       expect(reasoned.status).toBe(200);
 
-      // A late back-fill into another of yesterday's windows, which the worker
-      // may do because it is inside the 24-hour cut-off.
-      const late = windows.find(
+      // A late back-fill into another closed window, which the worker may do
+      // because it is inside the 24-hour cut-off.
+      const late = (reread.body.windows as typeof windows).find(
         (one) => one.status === 'missed' && one.id !== missed!.id && one.expected,
       );
       if (late) {
@@ -1201,8 +1226,11 @@ describe('checks', () => {
         expect(backfilled.body.window.isLate).toBe(true);
       }
 
-      // A complete one and a partial one, today.
-      const open = windows.filter((one) => new Date(one.endsAt) > new Date() && one.expected);
+      // A complete one and a partial one, today. Read back rather than taken
+      // from the earlier list, which still holds the pre-ageing times.
+      const open = (reread.body.windows as typeof windows).filter(
+        (one) => new Date(one.endsAt) > new Date() && one.expected,
+      );
       expect(open.length).toBeGreaterThanOrEqual(2);
 
       const completed = await api(worker, 'put', `/api/v1/windows/${open[0]!.id}/entry`).send({

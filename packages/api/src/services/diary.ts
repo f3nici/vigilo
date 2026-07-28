@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, isNull, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt } from 'drizzle-orm';
 import {
   addDays,
   buildTimeline,
@@ -239,6 +239,29 @@ export async function getDiaryEntry(
     throw new HttpError('not_found', 'That diary entry does not exist.');
   }
   return entry;
+}
+
+/**
+ * Entries by id, for a sync page.
+ *
+ * No read filtering here. A page has already been narrowed to what this
+ * principal's scope allows, and a device belongs to a member of staff rather
+ * than to a participant, so the visibility toggle is not in play. If a
+ * participant self-access device ever syncs, the filter belongs at the call
+ * site where the principal is known.
+ */
+export async function diaryEntriesByIds(
+  db: Database,
+  keyRing: KeyRing,
+  ids: readonly string[],
+): Promise<DiaryEntry[]> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select()
+    .from(diaryEntries)
+    .where(inArray(diaryEntries.id, [...ids]));
+  const context = await contextFor(db, rows);
+  return rows.map((row) => toDiaryEntry(keyRing, row, context));
 }
 
 /**

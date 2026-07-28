@@ -37,7 +37,7 @@ const CONTACT = {
 
 const PLAN_BODY_COLUMN = 'emergency_plans.body_enc';
 
-function toContact(keyRing: KeyRing, row: EmergencyContactRow): EmergencyContact {
+export function toContact(keyRing: KeyRing, row: EmergencyContactRow): EmergencyContact {
   return {
     id: row.id,
     participantId: row.participantId,
@@ -227,7 +227,7 @@ export async function deleteContact(
   });
 }
 
-function toPlan(keyRing: KeyRing, row: EmergencyPlanRow): EmergencyPlan {
+export function toPlan(keyRing: KeyRing, row: EmergencyPlanRow): EmergencyPlan {
   return {
     participantId: row.participantId,
     title: row.title,

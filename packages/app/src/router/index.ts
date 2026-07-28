@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
 import { useSessionStore } from '@/stores/session';
+import { useOfflineStore } from '@/stores/offline';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -22,12 +23,33 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, allowPending: true, title: 'Set up two-factor' },
   },
   {
+    path: '/install',
+    name: 'install',
+    component: () => import('@/views/InstallView.vue'),
+    meta: { requiresAuth: true, title: 'Install Vigilo' },
+  },
+  {
+    /*
+     * Reachable while locked, because it is the screen that unlocks. It also
+     * has to work with no signal: the records are already on the device and
+     * the whole point is getting at them without a network.
+     */
+    path: '/unlock',
+    name: 'unlock',
+    component: () => import('@/views/UnlockView.vue'),
+    meta: { requiresAuth: true, allowLocked: true, title: 'Unlock' },
+  },
+  {
     path: '/',
     component: () => import('@/components/AppShell.vue'),
     children: [
       {
         path: '',
         name: 'today',
+        // The manifest's start_url is /today, so an installed app opens
+        // straight onto the screen a worker is going to rather than through a
+        // redirect the user watches happen.
+        alias: 'today',
         component: () => import('@/views/TodayView.vue'),
         meta: { requiresAuth: true, title: 'Today' },
       },
@@ -147,6 +169,16 @@ router.beforeEach(async (to) => {
   const allowed = to.meta.roles as string[] | undefined;
   if (allowed && session.principal && !allowed.includes(session.principal.role)) {
     return { name: 'today' };
+  }
+
+  /*
+   * A device that has an unlock set up but is not unlocked cannot read its own
+   * records: they are encrypted with a key the unlock derives. So every screen
+   * except the unlock itself waits behind it.
+   */
+  const offline = useOfflineStore();
+  if (!to.meta.allowLocked && offline.state === 'locked') {
+    return { name: 'unlock' };
   }
 
   return true;

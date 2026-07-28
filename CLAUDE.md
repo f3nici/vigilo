@@ -4,17 +4,19 @@ Care records platform for a disability support team. Participant diaries and
 admin-defined observation checks, working offline. Ships as an installable PWA
 first, with native Android and iOS builds as the final phases.
 
-**Status: Phases 0 to 4 done.** Monorepo, Docker Compose and CI; identity,
-roles, TOTP, the break-glass CLI, the scope resolver, the audit log and the
-encryption layer; participant records with alerts, emergency contacts, emergency
-plans and assignments; check templates with versions and the field builder,
-per-participant schedules and segments, coverage, the materialiser and closer
-jobs, and entry recording with partial, late and edit-with-revision; the diary
-with categories, occurred-at, per-entry visibility, edit revisions and admin
-soft delete, encrypted attachments with EXIF stripping and thumbnails, and the
-participant timeline merging checks and diary. There is no offline sync yet.
-**Phase 5 (PWA and offline sync) is next**, in `docs/09-roadmap.md`. It is the
-riskiest phase and the v1 line.
+**Status: Phases 0 to 5 done. This is the v1 line.** Monorepo, Docker Compose
+and CI; identity, roles, TOTP, the break-glass CLI, the scope resolver, the
+audit log and the encryption layer; participant records with alerts, emergency
+contacts, emergency plans and assignments; check templates with versions and the
+field builder, per-participant schedules and segments, coverage, the
+materialiser and closer jobs, and entry recording with partial, late and
+edit-with-revision; the diary with categories, occurred-at, per-entry
+visibility, edit revisions and admin soft delete, encrypted attachments with
+EXIF stripping and thumbnails, and the participant timeline; and the installable
+PWA with a local SQLite database over OPFS, WebAuthn or PIN unlock, the
+revision-cursor sync, the idempotent outbox, the attachment queue and Web Push.
+**Phase 6 (reports) is next**, in `docs/09-roadmap.md`. Everything after the v1
+line is additive.
 
 ## Read before building
 
@@ -127,6 +129,24 @@ service container.
   mount reads fine and fails only on the first photo somebody attaches.
 - **HEIC is refused** (D41). The app converts to JPEG in the browser first, so
   an iPhone never hits it, but anything bypassing the app will.
+- **One tab owns the local database** (D47). The `opfs-sahpool` VFS takes
+  exclusive access handles, so a Web Lock elects an owner and a second tab is
+  told it is the second tab. Do not swap to the SharedArrayBuffer VFS without
+  understanding that it means cross-origin isolation forever.
+- **The device never reports being offline as an error** (doc 06 §7). A network
+  failure that is not an `ApiRequestError` means no signal, and the app carries
+  on with what it holds. Throwing from the session refresh gives a worker in a
+  house with no reception a blank screen, which is the failure Phase 5 exists to
+  prevent, and it has already happened once.
+- **A local write goes through the outbox and updates the local row in the same
+  transaction**, never straight to the API. `packages/app/src/lib/records.ts` is
+  the only place screens read or write records.
+- **`sync_applied_ops` is append-only.** It is the idempotency ledger: an UPDATE
+  would let a replay be re-applied and a DELETE would let one land twice.
+- Inter is self-hosted in `packages/app/public/fonts` and precached by the
+  service worker, so an installed app offline renders in the same typeface as
+  one online. Regenerate icons and splash screens with
+  `node packages/app/scripts/generate-icons.mjs`.
 - Coverage recalculation can rewrite compliance history. It must preview before
   applying, and it is heavily audited.
 - Never point a store review build at production data. Use staging with seeded
