@@ -53,3 +53,37 @@ describe('loadConfig', () => {
     expect(config.DATABASE_URL).toBe(base.DATABASE_URL);
   });
 });
+
+describe('optional settings', () => {
+  const required = {
+    DATABASE_URL: 'postgres://vigilo:vigilo@localhost:5432/vigilo',
+    MASTER_KEY: 'a'.repeat(44),
+  } as NodeJS.ProcessEnv;
+
+  it('treats a blank optional setting as absent', () => {
+    /*
+     * `docker compose` turns `${VAPID_PUBLIC_KEY:-}` into an empty string, not
+     * into nothing. Leaving the keys blank the way .env.example documents used
+     * to stop the API starting at all.
+     */
+    const config = loadConfig({
+      ...required,
+      VAPID_PUBLIC_KEY: '',
+      VAPID_PRIVATE_KEY: '',
+      VAPID_SUBJECT: '',
+      MIGRATE_DATABASE_URL: '',
+      APP_DB_PASSWORD: '',
+    });
+
+    expect(config.VAPID_PUBLIC_KEY).toBeUndefined();
+    expect(config.VAPID_PRIVATE_KEY).toBeUndefined();
+    expect(config.VAPID_SUBJECT).toBe('mailto:admin@example.com');
+    // The migrate URL falls back to the serving one, as it does when unset.
+    expect(config.migrateDatabaseUrl).toBe(required.DATABASE_URL);
+  });
+
+  it('still takes a real value', () => {
+    const config = loadConfig({ ...required, VAPID_PUBLIC_KEY: 'a-public-key' });
+    expect(config.VAPID_PUBLIC_KEY).toBe('a-public-key');
+  });
+});
