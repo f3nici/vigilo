@@ -56,6 +56,36 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, roles: ['admin'], title: 'Edit participant' },
       },
       {
+        path: 'participants/:id/schedule',
+        name: 'participant-schedule',
+        component: () => import('@/views/ScheduleEditorView.vue'),
+        meta: { requiresAuth: true, roles: ['admin', 'team_leader'], title: 'Check schedule' },
+      },
+      {
+        path: 'participants/:id/coverage',
+        name: 'participant-coverage',
+        component: () => import('@/views/CoverageView.vue'),
+        meta: { requiresAuth: true, roles: ['admin', 'team_leader'], title: 'Coverage' },
+      },
+      {
+        path: 'windows/:id',
+        name: 'window',
+        component: () => import('@/views/WindowView.vue'),
+        meta: { requiresAuth: true, title: 'Check' },
+      },
+      {
+        path: 'check-forms',
+        name: 'check-templates',
+        component: () => import('@/views/CheckTemplatesView.vue'),
+        meta: { requiresAuth: true, title: 'Check forms' },
+      },
+      {
+        path: 'check-forms/:id',
+        name: 'check-template',
+        component: () => import('@/views/TemplateBuilderView.vue'),
+        meta: { requiresAuth: true, roles: ['admin', 'nurse'], title: 'Field builder' },
+      },
+      {
         path: 'users',
         name: 'users',
         component: () => import('@/views/UsersView.vue'),

@@ -5,13 +5,16 @@ import {
   boolean,
   check,
   customType,
+  date,
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   smallint,
   text,
+  time,
   timestamp,
   unique,
   uniqueIndex,
@@ -19,7 +22,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 /**
- * Schema through Phase 2 (doc 03).
+ * Schema through Phase 3 (doc 03).
  *
  * `revision` on a syncable table is fed by one global sequence through a
  * trigger, not by the column default and not by the application. It is what
@@ -62,6 +65,22 @@ export const alertKindEnum = pgEnum('alert_kind', [
 ]);
 export const alertSeverityEnum = pgEnum('alert_severity', ['info', 'warning', 'critical']);
 export const scopeChangeEffectEnum = pgEnum('scope_change_effect', ['granted', 'revoked']);
+export const templateStatusEnum = pgEnum('check_template_status', ['active', 'retired']);
+export const versionStatusEnum = pgEnum('check_version_status', [
+  'draft',
+  'published',
+  'superseded',
+]);
+export const scheduleStatusEnum = pgEnum('check_schedule_status', ['active', 'paused', 'ended']);
+export const coverageEffectEnum = pgEnum('coverage_effect', ['covered', 'not_covered']);
+export const windowStatusEnum = pgEnum('check_window_status', [
+  'pending',
+  'partial',
+  'complete',
+  'missed',
+  'not_expected',
+]);
+export const entryStatusEnum = pgEnum('check_entry_status', ['partial', 'complete']);
 
 /** Single row, id always 1. Drives every window and "daily" calculation. */
 export const orgSettings = pgTable(
@@ -386,6 +405,393 @@ export const emergencyPlans = pgTable(
 );
 
 export type EmergencyPlanRow = typeof emergencyPlans.$inferSelect;
+
+/**
+ * Check templates (doc 03 §4). The template is the name and the lifecycle; the
+ * fields live on its versions, because a form that changed in March must not
+ * corrupt February's records.
+ */
+export const checkTemplates = pgTable(
+  'check_templates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    description: text('description'),
+    status: templateStatusEnum('status').notNull().default('active'),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('check_templates_status_idx').on(table.status),
+    index('check_templates_revision_idx').on(table.revision),
+  ],
+);
+
+export type CheckTemplateRow = typeof checkTemplates.$inferSelect;
+
+/**
+ * A frozen field set. Published versions are immutable: entries reference the
+ * version rather than the template, so a historical record always renders with
+ * the fields it was recorded against (doc 03 §4).
+ *
+ * There is no database constraint stopping an UPDATE on a published row,
+ * because the app role legitimately supersedes them. The immutability is
+ * enforced in the service, which refuses any schema edit that is not a draft.
+ */
+export const checkTemplateVersions = pgTable(
+  'check_template_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    templateId: uuid('template_id')
+      .notNull()
+      .references(() => checkTemplates.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    /** The ordered field definition. Shape and rules in @vigilo/shared. */
+    schema: jsonb('schema').$type<{ fields: unknown[] }>().notNull(),
+    status: versionStatusEnum('status').notNull().default('draft'),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    publishedBy: uuid('published_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    unique('check_template_versions_number_key').on(table.templateId, table.version),
+    index('check_template_versions_template_idx').on(table.templateId),
+    index('check_template_versions_revision_idx').on(table.revision),
+  ],
+);
+
+export type CheckTemplateVersionRow = typeof checkTemplateVersions.$inferSelect;
+
+/** One participant, one template, and the grid rules underneath (doc 03 §5). */
+export const checkSchedules = pgTable(
+  'check_schedules',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    templateId: uuid('template_id')
+      .notNull()
+      .references(() => checkTemplates.id),
+    name: text('name').notNull(),
+    activeFrom: date('active_from').notNull(),
+    activeTo: date('active_to'),
+    status: scheduleStatusEnum('status').notNull().default('active'),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('check_schedules_participant_idx').on(table.participantId),
+    index('check_schedules_status_idx').on(table.status),
+    index('check_schedules_revision_idx').on(table.revision),
+  ],
+);
+
+export type CheckScheduleRow = typeof checkSchedules.$inferSelect;
+
+/**
+ * The grid itself, and the thing an admin actually sets up. `applies_to_time`
+ * at or before `applies_from_time` means the segment crosses midnight.
+ * Overlap between segments is refused in the service, where the whole set is
+ * visible at once; a per-row constraint cannot see the set.
+ */
+export const checkScheduleSegments = pgTable(
+  'check_schedule_segments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    scheduleId: uuid('schedule_id')
+      .notNull()
+      .references(() => checkSchedules.id, { onDelete: 'cascade' }),
+    label: text('label'),
+    windowMinutes: integer('window_minutes').notNull().default(120),
+    anchorTime: time('anchor_time').notNull(),
+    appliesFromTime: time('applies_from_time').notNull(),
+    appliesToTime: time('applies_to_time').notNull(),
+    /** Null means every day. 0 is Sunday. */
+    weekdays: smallint('weekdays').array(),
+    sortOrder: smallint('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    check('segments_window_minutes_sane', sql`${table.windowMinutes} between 5 and 1440`),
+    index('check_schedule_segments_schedule_idx').on(table.scheduleId),
+    index('check_schedule_segments_revision_idx').on(table.revision),
+  ],
+);
+
+export type CheckScheduleSegmentRow = typeof checkScheduleSegments.$inferSelect;
+
+/**
+ * Baseline supported hours (doc 03 §5). Superseded rows keep their dates rather
+ * than being deleted, so recalculating a past week uses the pattern that
+ * actually applied then instead of today's.
+ */
+export const coveragePatterns = pgTable(
+  'coverage_patterns',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    weekday: smallint('weekday').notNull(),
+    startTime: time('start_time').notNull(),
+    endTime: time('end_time').notNull(),
+    activeFrom: date('active_from').notNull(),
+    activeTo: date('active_to'),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    check('coverage_patterns_weekday_range', sql`${table.weekday} between 0 and 6`),
+    index('coverage_patterns_participant_idx').on(table.participantId),
+    index('coverage_patterns_revision_idx').on(table.revision),
+  ],
+);
+
+export type CoveragePatternRow = typeof coveragePatterns.$inferSelect;
+
+/** Dated overrides for reality. Exceptions win over the pattern. */
+export const coverageExceptions = pgTable(
+  'coverage_exceptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+    effect: coverageEffectEnum('effect').notNull(),
+    /** Plain operational text ("family holiday"), never clinical detail. */
+    reason: text('reason').notNull(),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    check('coverage_exceptions_ends_after_start', sql`${table.endsAt} > ${table.startsAt}`),
+    index('coverage_exceptions_participant_idx').on(table.participantId, table.startsAt),
+    index('coverage_exceptions_revision_idx').on(table.revision),
+  ],
+);
+
+export type CoverageExceptionRow = typeof coverageExceptions.$inferSelect;
+
+/**
+ * The materialised grid, and the busiest table in the schema (doc 03 §5).
+ *
+ * Materialised rather than computed on the fly for two reasons: windows carry
+ * state, and a device with no signal needs a concrete list to work from.
+ *
+ * `segment_id` is kept but not cascaded, so history survives a schedule change:
+ * a window recorded against last month's grid keeps pointing at the rule that
+ * produced it even after the admin replaces that rule.
+ */
+export const checkWindows = pgTable(
+  'check_windows',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    scheduleId: uuid('schedule_id')
+      .notNull()
+      .references(() => checkSchedules.id, { onDelete: 'cascade' }),
+    segmentId: uuid('segment_id').references(() => checkScheduleSegments.id, {
+      onDelete: 'set null',
+    }),
+    templateVersionId: uuid('template_version_id')
+      .notNull()
+      .references(() => checkTemplateVersions.id),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+    expected: boolean('expected').notNull().default(true),
+    /** Why not, in the words the greyed-out row shows (doc 06 §3). */
+    coverageReason: text('coverage_reason'),
+    status: windowStatusEnum('status').notNull().default('pending'),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    isLate: boolean('is_late').notNull().default(false),
+    lateByMinutes: integer('late_by_minutes'),
+    recalculatedAt: timestamp('recalculated_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    // The grid is deterministic, so re-running the materialiser must find the
+    // window it already made rather than laying a second one on top of it.
+    unique('check_windows_grid_key').on(table.scheduleId, table.startsAt, table.segmentId),
+    index('check_windows_participant_idx').on(table.participantId, table.startsAt),
+    index('check_windows_closer_idx').on(table.status, table.endsAt),
+    index('check_windows_revision_idx').on(table.revision),
+  ],
+);
+
+export type CheckWindowRow = typeof checkWindows.$inferSelect;
+
+/**
+ * One entry per window. Partial entry updates this row as more fields are
+ * filled, it never writes a second one (doc 03 §6).
+ *
+ * The id is a UUID v7 generated on the device, so an entry has stable identity
+ * before it reaches the server and a replayed request updates rather than
+ * duplicates.
+ */
+export const checkEntries = pgTable(
+  'check_entries',
+  {
+    id: uuid('id').primaryKey(),
+    windowId: uuid('window_id')
+      .notNull()
+      .references(() => checkWindows.id, { onDelete: 'cascade' }),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    templateVersionId: uuid('template_version_id')
+      .notNull()
+      .references(() => checkTemplateVersions.id),
+    recordedBy: uuid('recorded_by').references(() => users.id),
+    /** Device time when the worker recorded it. */
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+    /** Server time. Authoritative for lateness, because device clocks drift. */
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+    status: entryStatusEnum('status').notNull().default('partial'),
+    isLate: boolean('is_late').notNull().default(false),
+    deviceId: uuid('device_id'),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    editCount: integer('edit_count').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    unique('check_entries_window_key').on(table.windowId),
+    index('check_entries_participant_idx').on(table.participantId, table.recordedAt),
+    index('check_entries_revision_idx').on(table.revision),
+  ],
+);
+
+export type CheckEntryRow = typeof checkEntries.$inferSelect;
+
+/**
+ * One row per answered field (doc 03 §6).
+ *
+ * `value_number` is plaintext and `value_text_enc` is not, which is Option A
+ * from doc 03 §6, locked as A8. Trends and compliance stay plain SQL over the
+ * numbers, and the free text a worker types about a person is encrypted. The
+ * two are not mixed.
+ *
+ * `unit` is copied from the schema at write time so the record survives a
+ * later version changing it.
+ */
+export const checkEntryValues = pgTable(
+  'check_entry_values',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    entryId: uuid('entry_id')
+      .notNull()
+      .references(() => checkEntries.id, { onDelete: 'cascade' }),
+    fieldKey: text('field_key').notNull(),
+    /** numeric, not float: a clinical value must not be rounded on the way in. */
+    valueNumber: numeric('value_number'),
+    valueBool: boolean('value_bool'),
+    valueTextEnc: encrypted('value_text_enc'),
+    valueJson: jsonb('value_json'),
+    unit: text('unit'),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+    recordedBy: uuid('recorded_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    unique('check_entry_values_field_key').on(table.entryId, table.fieldKey),
+    index('check_entry_values_entry_idx').on(table.entryId),
+    index('check_entry_values_revision_idx').on(table.revision),
+  ],
+);
+
+export type CheckEntryValueRow = typeof checkEntryValues.$inferSelect;
+
+/**
+ * Append-only edit history (doc 01 §5.5). Never updated, never deleted: the
+ * original value of a clinical record is not something an edit gets to remove.
+ *
+ * Old and new values are encrypted as a pair, because a revision row holding
+ * the plaintext of an encrypted field would be a way around the encryption.
+ */
+export const checkEntryRevisions = pgTable(
+  'check_entry_revisions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    entryId: uuid('entry_id')
+      .notNull()
+      .references(() => checkEntries.id, { onDelete: 'cascade' }),
+    fieldKey: text('field_key').notNull(),
+    valuesEnc: encrypted('values_enc').notNull(),
+    changedBy: uuid('changed_by').references(() => users.id),
+    changedAt: timestamp('changed_at', { withTimezone: true }).notNull().defaultNow(),
+    reason: text('reason'),
+  },
+  (table) => [index('check_entry_revisions_entry_idx').on(table.entryId, table.changedAt)],
+);
+
+export type CheckEntryRevisionRow = typeof checkEntryRevisions.$inferSelect;
+
+/** Admin-configurable, because this is the organisation's vocabulary. */
+export const missedReasonCodes = pgTable(
+  'missed_reason_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    code: text('code').notNull().unique(),
+    label: text('label').notNull(),
+    requiresNote: boolean('requires_note').notNull().default(false),
+    active: boolean('active').notNull().default(true),
+    sortOrder: smallint('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [index('missed_reason_codes_revision_idx').on(table.revision)],
+);
+
+export type MissedReasonCodeRow = typeof missedReasonCodes.$inferSelect;
+
+/** One per window, and the note is free text about a person, so encrypted. */
+export const windowMissReasons = pgTable(
+  'window_miss_reasons',
+  {
+    /** Device-generated UUID v7, like an entry. */
+    id: uuid('id').primaryKey(),
+    windowId: uuid('window_id')
+      .notNull()
+      .references(() => checkWindows.id, { onDelete: 'cascade' }),
+    reasonCodeId: uuid('reason_code_id')
+      .notNull()
+      .references(() => missedReasonCodes.id),
+    noteEnc: encrypted('note_enc'),
+    recordedBy: uuid('recorded_by').references(() => users.id),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+    deviceId: uuid('device_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    unique('window_miss_reasons_window_key').on(table.windowId),
+    index('window_miss_reasons_revision_idx').on(table.revision),
+  ],
+);
+
+export type WindowMissReasonRow = typeof windowMissReasons.$inferSelect;
 
 /**
  * How a device learns to download or purge a participant (doc 03 §11).

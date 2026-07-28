@@ -12,6 +12,16 @@ import { authRoutes } from './routes/auth.js';
 import { userRoutes } from './routes/users.js';
 import { participantRoutes } from './routes/participants.js';
 import { assignmentRoutes } from './routes/assignments.js';
+import { templateRoutes, templateVersionRoutes } from './routes/templates.js';
+import {
+  checkEntryRoutes,
+  coverageExceptionRoutes,
+  myWindowRoutes,
+  participantCheckRoutes,
+  reasonCodeRoutes,
+  scheduleRoutes,
+  windowRoutes,
+} from './routes/checks.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
 import { auditActorMiddleware, csrfProtection, loadPrincipal } from './middleware/principal.js';
 
@@ -75,7 +85,18 @@ export function createApp(config: Config, logger: Logger, db: Database, keyRing:
   app.use('/api/v1/auth', authRoutes(db, config, keyRing));
   app.use('/api/v1/users', userRoutes(db));
   app.use('/api/v1/participants', participantRoutes(db, keyRing));
+  // Schedules, coverage and windows hang off a participant too, in their own
+  // file so neither router is about two things at once.
+  app.use('/api/v1/participants', participantCheckRoutes(db, keyRing));
   app.use('/api/v1/assignments', assignmentRoutes(db));
+  app.use('/api/v1/check-templates', templateRoutes(db));
+  app.use('/api/v1/check-template-versions', templateVersionRoutes(db));
+  app.use('/api/v1/schedules', scheduleRoutes(db));
+  app.use('/api/v1/coverage-exceptions', coverageExceptionRoutes(db));
+  app.use('/api/v1/windows', windowRoutes(db, keyRing));
+  app.use('/api/v1/check-entries', checkEntryRoutes(db, keyRing));
+  app.use('/api/v1/missed-reason-codes', reasonCodeRoutes(db));
+  app.use('/api/v1/me', myWindowRoutes(db, keyRing));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

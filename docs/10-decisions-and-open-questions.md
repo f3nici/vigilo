@@ -44,6 +44,10 @@ parts of D5, D6 and D28 they touch.
 | D34 | **Ship as an installable PWA first. Native Android and iOS come last** (phases 11 and 12) | The PWA is a complete product on its own: offline recording, local SQLite over OPFS, Web Push, WebAuthn unlock. Native adds store presence, storage iOS cannot evict, and reliable background sync. Doc 01 §13 |
 | D35 | **Local storage is SQLite on both platforms**: SQLite-WASM over OPFS in the PWA, Capacitor SQLite natively. Not IndexedDB | One local schema, one set of queries, written once and reused when the native builds arrive. Costs about 1 MB of WASM |
 | D36 | **Break-glass admin recovery is a CLI in the API container**, run over `docker compose exec`, audited on every invocation, with no HTTP surface and no access to participant data | The only account recovery path that can exist without email. Resolves the sole-locked-out-admin risk. Doc 01 §10.1, doc 02 §9, doc 07 §3 |
+| D37 | **A coverage pattern with no ranges at all means always covered** | Set in Phase 3. The other reading, that an unconfigured pattern covers nothing, lets a schedule be built and produce a week of `not_expected` windows without saying why. An admin narrows from "always" rather than opening from "never". Doc 01 §5.4 |
+| D38 | **Coverage pattern rows are superseded, not replaced**, keeping `active_from` and `active_to` | So recalculating a past week uses the pattern that applied then. Correcting history is what a dated exception is for, and that records who decided it. Doc 03 §5 |
+| D39 | **Filling in the rest of a part-recorded check is the same entry, not an edit** | No revision rows until every required field has a value. After that, any change is a change to a clinical record and is preserved with the old value. Doc 01 §5.5 |
+| D40 | **A midnight range end may be written `00:00` or `24:00`** | `<input type="time">` refuses `24:00` outright and renders an empty box, so the picker an admin uses can only produce `00:00`. Both spellings resolve to the same instant |
 
 ## 2. Assumptions made while writing these documents
 
@@ -105,10 +109,13 @@ admin-configured per participant, with segments for different intervals by time
 of day and a live preview of the resulting window times before saving. See D34
 and doc 01 §5.3.
 
-**Q5. What happens to a window that spans a coverage boundary?**
-A 2-hour window from 18:00 with coverage ending at 19:00. Is it expected,
-not expected, or expected with a shorter effective window? Suggested default:
-expected if any part of the window is covered.
+**~~Q5. What happens to a window that spans a coverage boundary?~~**
+*Resolved 2026-07-27, taking the suggested default.* **Expected if any part of
+the window is covered.** A 2-hour window from 18:00 where support ends at 19:00
+still has an hour of someone there to record it, and calling it not-expected
+would hide a check that could have happened. Coverage ranges are half-open, so
+a window starting exactly as support ends is not expected. Implemented in
+`resolveCoverage` in `packages/shared/src/coverage.ts` and tested both ways.
 
 **~~Q6. Different intervals at different times of day?~~** *Resolved 2026-07-26
 by the segmented schedule model.* One schedule holds several segments, each with

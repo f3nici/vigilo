@@ -4,12 +4,14 @@ Care records platform for a disability support team. Participant diaries and
 admin-defined observation checks, working offline. Ships as an installable PWA
 first, with native Android and iOS builds as the final phases.
 
-**Status: Phases 0, 1 and 2 done.** Monorepo, Docker Compose and CI; identity,
+**Status: Phases 0 to 3 done.** Monorepo, Docker Compose and CI; identity,
 roles, TOTP, the break-glass CLI, the scope resolver, the audit log and the
 encryption layer; participant records with alerts, emergency contacts, emergency
-plans and assignments. There are no checks, no diary and no offline sync yet.
-**Phase 3 (checks) is next**, in `docs/09-roadmap.md`. It is the biggest phase
-and the reason the product exists.
+plans and assignments; check templates with versions and the field builder,
+per-participant schedules and segments, coverage, the materialiser and closer
+jobs, and entry recording with partial, late and edit-with-revision. There is no
+diary and no offline sync yet. **Phase 4 (diary) is next**, in
+`docs/09-roadmap.md`.
 
 ## Read before building
 
