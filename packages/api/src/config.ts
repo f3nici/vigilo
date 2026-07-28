@@ -75,6 +75,13 @@ const envSchema = z
     MAX_FAILED_ATTEMPTS: z.coerce.number().int().positive().default(10),
     LOCKOUT_MINUTES: z.coerce.number().int().positive().default(15),
 
+    /**
+     * Where attachment bytes live (doc 03 §8). An encrypted volume in a real
+     * deployment, and each file is encrypted again under its own data key, so
+     * a snapshot of the disk without the master key yields nothing.
+     */
+    ATTACHMENT_DIR: z.string().min(1).default('/data/attachments'),
+
     /** Run pending migrations on boot. Off in tests, which manage their own. */
     MIGRATE_ON_START: z
       .enum(['true', 'false'])

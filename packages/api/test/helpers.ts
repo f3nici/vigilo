@@ -1,4 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type { Express } from 'express';
 import request from 'supertest';
 import { sql } from 'drizzle-orm';
@@ -47,6 +50,8 @@ export type Harness = {
   ownerDb: Database;
   config: Config;
   keyRing: KeyRing;
+  /** Throwaway attachment volume for this run. */
+  attachmentDir: string;
   close: () => Promise<void>;
 };
 
@@ -55,11 +60,16 @@ export async function createHarness(): Promise<Harness> {
   await runMigrations(owner.db);
   await provisionAppRole(owner.db, 'vigilo_app', APP_PASSWORD);
 
+  // Attachments land in a throwaway directory per run, so a suite never reads
+  // a file another suite wrote and the real volume is never touched.
+  const attachmentDir = await mkdtemp(path.join(tmpdir(), 'vigilo-attachments-'));
+
   const config = loadConfig({
     NODE_ENV: 'test',
     DATABASE_URL: appUrl(),
     MIGRATE_DATABASE_URL: OWNER_URL,
     MASTER_KEY,
+    ATTACHMENT_DIR: attachmentDir,
     LOG_LEVEL: 'silent',
     BUILD_HASH: 'test-build',
     MIGRATE_ON_START: 'false',
@@ -77,9 +87,11 @@ export async function createHarness(): Promise<Harness> {
     ownerDb: owner.db,
     config,
     keyRing,
+    attachmentDir,
     close: async () => {
       await appConn.sql.end();
       await owner.sql.end();
+      await rm(attachmentDir, { recursive: true, force: true });
     },
   };
 }
@@ -115,6 +127,10 @@ export async function resetData(ownerDb: Database): Promise<void> {
       check_templates,
       coverage_patterns,
       coverage_exceptions,
+      diary_entry_revisions,
+      diary_entries,
+      diary_categories,
+      attachments,
       users,
       participants
     restart identity cascade
@@ -134,6 +150,24 @@ export async function resetData(ownerDb: Database): Promise<void> {
       ('forgot', 'Forgot to record it', false, 70),
       ('other', 'Something else', true, 80)
     on conflict (code) do update set active = true, requires_note = excluded.requires_note
+  `);
+
+  // Same for the diary categories seeded by migration 0010. They are
+  // configuration, not test data, so an entry always has something to be
+  // filed under. Truncated first rather than upserted, so a category a test
+  // creates does not survive into the next run and collide with itself.
+  await ownerDb.execute(sql`
+    insert into diary_categories (slug, label, colour, sort_order)
+    values
+      ('personal_care', 'Personal care', 'sky', 10),
+      ('behaviour', 'Behaviour', 'peach', 20),
+      ('activity', 'Activity', 'sage', 30),
+      ('medical', 'Medical', 'rose', 40),
+      ('communication', 'Communication', 'lavender', 50),
+      ('family_contact', 'Family contact', 'teal', 60),
+      ('equipment', 'Equipment', 'sand', 70),
+      ('other', 'Other', 'slate', 80)
+    on conflict (slug) do update set active = true
   `);
 }
 

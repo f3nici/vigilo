@@ -16,6 +16,8 @@ import EmergencyContacts from '@/components/EmergencyContacts.vue';
 import EmergencyPlanPanel from '@/components/EmergencyPlanPanel.vue';
 import ParticipantAssignments from '@/components/ParticipantAssignments.vue';
 import ParticipantChecks from '@/components/ParticipantChecks.vue';
+import ParticipantDiary from '@/components/ParticipantDiary.vue';
+import ParticipantTimeline from '@/components/ParticipantTimeline.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 import { useSessionStore } from '@/stores/session';
@@ -24,9 +26,10 @@ import { ageInYears, formatDate, timeRemaining } from '@/lib/format';
 /**
  * The participant overview (doc 06 §4.2).
  *
- * Alerts sit above everything, always. Checks arrived in Phase 3; the diary
- * and the merged timeline arrive in Phase 4. Sections appear as the features
- * behind them exist, rather than as a shell of empty tabs.
+ * Alerts sit above everything and stay visible on every tab, because an
+ * allergy is not something a person should have to change tabs to find. The
+ * timeline is the default: what happened to this person, in order, which is
+ * how a shift is actually handed over.
  */
 const route = useRoute();
 const router = useRouter();
@@ -38,6 +41,15 @@ const participant = ref<ParticipantDetail | null>(null);
 const loading = ref(true);
 const error = ref('');
 const confirmingArchive = ref(false);
+
+const tabs = [
+  { key: 'timeline', label: 'Timeline' },
+  { key: 'checks', label: 'Checks' },
+  { key: 'diary', label: 'Diary' },
+  { key: 'info', label: 'Info' },
+] as const;
+
+const tab = ref<(typeof tabs)[number]['key']>('timeline');
 
 const role = computed(() => session.principal?.role ?? 'worker');
 const canManage = computed(() => canManageParticipants(role.value));
@@ -171,63 +183,95 @@ async function restore(): Promise<void> {
         @changed="load"
       />
 
-      <section class="space-y-3">
-        <h2 class="text-lg font-semibold">Details</h2>
-        <dl class="card grid gap-x-6 gap-y-3 p-4 sm:grid-cols-2">
-          <div>
-            <dt class="text-text-secondary text-sm">Date of birth</dt>
-            <dd class="tabular">
-              {{ formatDate(participant.dateOfBirth) }}
-              <span class="text-text-secondary">({{ ageInYears(participant.dateOfBirth) }})</span>
-            </dd>
-          </div>
-          <div>
-            <dt class="text-text-secondary text-sm">NDIS number</dt>
-            <dd class="tabular">{{ participant.ndisNumber }}</dd>
-          </div>
-          <div>
-            <dt class="text-text-secondary text-sm">Phone</dt>
-            <dd>
-              <a v-if="participant.phone" class="underline" :href="`tel:${participant.phone}`">
-                {{ participant.phone }}
-              </a>
-              <span v-else class="text-text-secondary">Not recorded</span>
-            </dd>
-          </div>
-          <div>
-            <dt class="text-text-secondary text-sm">Email</dt>
-            <dd class="break-all">
-              {{ participant.email ?? 'Not recorded' }}
-            </dd>
-          </div>
-          <div class="sm:col-span-2">
-            <dt class="text-text-secondary text-sm">Address</dt>
-            <dd class="whitespace-pre-wrap">{{ participant.address ?? 'Not recorded' }}</dd>
-          </div>
-          <div v-if="participant.notes" class="sm:col-span-2">
-            <dt class="text-text-secondary text-sm">Admin notes</dt>
-            <dd class="whitespace-pre-wrap">{{ participant.notes }}</dd>
-          </div>
-        </dl>
-      </section>
+      <!-- Doc 06 §4.2. Alerts are above this and stay on every tab. -->
+      <nav
+        class="border-border-default flex flex-wrap gap-1 border-b"
+        aria-label="Participant sections"
+      >
+        <button
+          v-for="one in tabs"
+          :key="one.key"
+          type="button"
+          class="min-h-11 border-b-2 px-3 font-medium"
+          :style="
+            tab === one.key
+              ? { borderColor: 'var(--vigilo-primary)', color: 'var(--vigilo-primary)' }
+              : { borderColor: 'transparent' }
+          "
+          :aria-current="tab === one.key ? 'page' : undefined"
+          @click="tab = one.key"
+        >
+          {{ one.label }}
+        </button>
+      </nav>
 
-      <ParticipantChecks :participant-id="participant.id" />
+      <ParticipantTimeline v-if="tab === 'timeline'" :participant-id="participant.id" />
 
-      <EmergencyContacts
+      <ParticipantChecks v-else-if="tab === 'checks'" :participant-id="participant.id" />
+
+      <ParticipantDiary
+        v-else-if="tab === 'diary'"
         :participant-id="participant.id"
-        :contacts="participant.contacts"
-        :can-edit="canEditContacts(role)"
-        @changed="load"
+        :participant-name="participant.preferredName ?? participant.firstName"
       />
 
-      <EmergencyPlanPanel
-        :participant-id="participant.id"
-        :plan="participant.emergencyPlan"
-        :can-edit="canWriteEmergencyPlan(role)"
-        @changed="load"
-      />
+      <template v-else>
+        <section class="space-y-3">
+          <h2 class="text-lg font-semibold">Details</h2>
+          <dl class="card grid gap-x-6 gap-y-3 p-4 sm:grid-cols-2">
+            <div>
+              <dt class="text-text-secondary text-sm">Date of birth</dt>
+              <dd class="tabular">
+                {{ formatDate(participant.dateOfBirth) }}
+                <span class="text-text-secondary">({{ ageInYears(participant.dateOfBirth) }})</span>
+              </dd>
+            </div>
+            <div>
+              <dt class="text-text-secondary text-sm">NDIS number</dt>
+              <dd class="tabular">{{ participant.ndisNumber }}</dd>
+            </div>
+            <div>
+              <dt class="text-text-secondary text-sm">Phone</dt>
+              <dd>
+                <a v-if="participant.phone" class="underline" :href="`tel:${participant.phone}`">
+                  {{ participant.phone }}
+                </a>
+                <span v-else class="text-text-secondary">Not recorded</span>
+              </dd>
+            </div>
+            <div>
+              <dt class="text-text-secondary text-sm">Email</dt>
+              <dd class="break-all">
+                {{ participant.email ?? 'Not recorded' }}
+              </dd>
+            </div>
+            <div class="sm:col-span-2">
+              <dt class="text-text-secondary text-sm">Address</dt>
+              <dd class="whitespace-pre-wrap">{{ participant.address ?? 'Not recorded' }}</dd>
+            </div>
+            <div v-if="participant.notes" class="sm:col-span-2">
+              <dt class="text-text-secondary text-sm">Admin notes</dt>
+              <dd class="whitespace-pre-wrap">{{ participant.notes }}</dd>
+            </div>
+          </dl>
+        </section>
 
-      <ParticipantAssignments v-if="canGrantAccess(role)" :participant-id="participant.id" />
+        <EmergencyContacts
+          :participant-id="participant.id"
+          :contacts="participant.contacts"
+          :can-edit="canEditContacts(role)"
+          @changed="load"
+        />
+
+        <EmergencyPlanPanel
+          :participant-id="participant.id"
+          :plan="participant.emergencyPlan"
+          :can-edit="canWriteEmergencyPlan(role)"
+          @changed="load"
+        />
+
+        <ParticipantAssignments v-if="canGrantAccess(role)" :participant-id="participant.id" />
+      </template>
     </template>
   </div>
 </template>

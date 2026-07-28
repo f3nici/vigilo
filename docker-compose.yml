@@ -45,6 +45,12 @@ services:
       # No TLS in front of the local stack, so the cookie cannot be Secure.
       # Production terminates TLS and leaves this at true.
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      # Attachment bytes. Its own volume so it can be an encrypted one in
+      # production and can be snapshotted separately from the database
+      # (doc 07 §6).
+      ATTACHMENT_DIR: /data/attachments
+    volumes:
+      - attachment-data:/data/attachments
     healthcheck:
       test:
         [
@@ -72,3 +78,4 @@ services:
 
 volumes:
   db-data:
+  attachment-data:

@@ -48,6 +48,10 @@ parts of D5, D6 and D28 they touch.
 | D38 | **Coverage pattern rows are superseded, not replaced**, keeping `active_from` and `active_to` | So recalculating a past week uses the pattern that applied then. Correcting history is what a dated exception is for, and that records who decided it. Doc 03 §5 |
 | D39 | **Filling in the rest of a part-recorded check is the same entry, not an edit** | No revision rows until every required field has a value. After that, any change is a change to a clinical record and is preserved with the old value. Doc 01 §5.5 |
 | D40 | **A midnight range end may be written `00:00` or `24:00`** | `<input type="time">` refuses `24:00` outright and renders an empty box, so the picker an admin uses can only produce `00:00`. Both spellings resolve to the same instant |
+| D41 | **HEIC is refused, though doc 03 §8 lists it.** The app converts to JPEG in the browser before upload | Nothing available server-side decodes HEIC, so its GPS tags could not be stripped, and storing a photo with the participant's home coordinates in it breaks doc 07 §7. Safari can decode HEIC, so the canvas re-encode in the app means an iPhone user never meets the limit. The refusal is the backstop, and it names the iPhone setting to change |
+| D42 | **A diary edit writes one revision row per changed field** | Doc 03 §7 sketches one row holding an old and a new body plus an old and a new category. That shape has nowhere to record a changed `occurred_at` or a flipped visibility toggle, both of which change what the record means. Same shape as `check_entry_revisions`, and the old and new values are encrypted together |
+| D43 | **A soft-deleted diary entry stays readable by an admin, and is shown marked as deleted** | The row survives for retention, so somebody has to be able to see it. Hiding it from the admin who just deleted it made the delete look like it had failed. Everyone else sees it gone |
+| D44 | **Diary search is per participant over decrypted bodies**, confirming A9 option (a) | Doc 03 §7 left this open. An encrypted body cannot feed a tsvector, and the realistic question is "what happened with this person last week". `body_search_tsv` is not in the schema |
 
 ## 2. Assumptions made while writing these documents
 
@@ -65,7 +69,7 @@ before Phase 1.**
 | A6 | Late back-fill is allowed up to 24 hours, then needs a team leader | Prevents indefinite retrospective record creation | Config value |
 | A7 | View events are audit-logged, batched to one row per user per participant per 15 minutes | Full per-request view logging would dwarf the clinical data | Config value |
 | A8 | Numeric check values stay unencrypted so trends and compliance are plain SQL | Doc 03 §6 Option A | Option B needs a reporting table and a refresh job |
-| A9 | Diary search is per participant on decrypted data, not org-wide full text | Encrypted bodies cannot use Postgres full text | Needs a separate encrypted search index |
+| ~~A9~~ | ~~Diary search is per participant on decrypted data, not org-wide full text~~ | **Confirmed in Phase 4 and now D44.** Option (a) from doc 03 §7: no `body_search_tsv`, search runs after decryption inside one participant's record | n/a |
 | A10 | Devices hold 7 days back and forward of windows, 30 days of entries | Bounds local database size and bootstrap cost | Config values |
 | A11 | Participants cannot see incidents or their own missed-check compliance | Compliance concerns staff performance, and incident narratives often involve third parties | Visibility rule change |
 | A12 | Attachments are capped at 20 MB, images and PDF only | | Config |

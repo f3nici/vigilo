@@ -22,11 +22,19 @@ import {
   scheduleRoutes,
   windowRoutes,
 } from './routes/checks.js';
+import {
+  attachmentRoutes,
+  diaryCategoryRoutes,
+  diaryEntryRoutes,
+  participantDiaryRoutes,
+} from './routes/diary.js';
+import { createFileStore } from './services/storage.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
 import { auditActorMiddleware, csrfProtection, loadPrincipal } from './middleware/principal.js';
 
 export function createApp(config: Config, logger: Logger, db: Database, keyRing: KeyRing): Express {
   const app = express();
+  const store = createFileStore(config.ATTACHMENT_DIR);
 
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
@@ -96,6 +104,12 @@ export function createApp(config: Config, logger: Logger, db: Database, keyRing:
   app.use('/api/v1/windows', windowRoutes(db, keyRing));
   app.use('/api/v1/check-entries', checkEntryRoutes(db, keyRing));
   app.use('/api/v1/missed-reason-codes', reasonCodeRoutes(db));
+  // The diary and the timeline hang off a participant as well, again in their
+  // own file rather than piling a third subject onto one router.
+  app.use('/api/v1/participants', participantDiaryRoutes(db, keyRing));
+  app.use('/api/v1/diary-entries', diaryEntryRoutes(db, keyRing));
+  app.use('/api/v1/diary-categories', diaryCategoryRoutes(db));
+  app.use('/api/v1/attachments', attachmentRoutes(db, keyRing, store));
   app.use('/api/v1/me', myWindowRoutes(db, keyRing));
 
   app.use(notFoundHandler);
