@@ -2,12 +2,16 @@ import {
   alertSchema,
   apiErrorSchema,
   assignmentSchema,
+  attachmentSchema,
   checkScheduleSchema,
   checkTemplateSchema,
   checkWindowSchema,
   clockSkewMs,
   coverageExceptionSchema,
   coveragePatternSchema,
+  diaryCategorySchema,
+  diaryEntrySchema,
+  diaryRevisionSchema,
   emergencyContactSchema,
   emergencyPlanSchema,
   entryRevisionSchema,
@@ -18,6 +22,7 @@ import {
   recalculationPreviewSchema,
   schedulePreviewSchema,
   templateVersionSchema,
+  timelineItemSchema,
   windowDetailSchema,
   participantDetailSchema,
   participantSummarySchema,
@@ -26,6 +31,7 @@ import {
   readyResponseSchema,
   totpEnrolResponseSchema,
   userSummarySchema,
+  type Attachment,
   type CheckSchedule,
   type CheckTemplate,
   type CheckWindow,
@@ -34,10 +40,17 @@ import {
   type CreateAlertRequest,
   type CreateAssignmentRequest,
   type CreateContactRequest,
+  type CreateAttachmentRequest,
   type CreateCoverageExceptionRequest,
+  type CreateDiaryCategoryRequest,
+  type CreateDiaryEntryRequest,
   type CreateParticipantRequest,
   type CreateScheduleRequest,
   type CreateTemplateRequest,
+  type DiaryCategory,
+  type DiaryEntry,
+  type DiaryQuery,
+  type DiaryRevision,
   type EditEntryRequest,
   type EmergencyContact,
   type EmergencyPlan,
@@ -56,6 +69,9 @@ import {
   type SchedulePreview,
   type TemplateSchema,
   type TemplateVersion,
+  type TimelineItem,
+  type UpdateDiaryCategoryRequest,
+  type UpdateDiaryEntryRequest,
   type UpdateTemplateRequest,
   type WindowDetail,
   type IssuedCredential,
@@ -627,4 +643,148 @@ export async function listDueWindows(
 ): Promise<{ windows: CheckWindow[]; timeZone: string }> {
   const query = withinMinutes === undefined ? '' : `?within=${withinMinutes}`;
   return windowListSchema.parse(await request(`/v1/me/windows/due${query}`));
+}
+
+// Diary (doc 04 §8).
+const diaryListSchema = z.object({
+  entries: z.array(diaryEntrySchema),
+  timeZone: z.string(),
+});
+
+export async function listDiary(
+  participantId: string,
+  query: Partial<DiaryQuery> = {},
+): Promise<{ entries: DiaryEntry[]; timeZone: string }> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  }
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return diaryListSchema.parse(await request(`/v1/participants/${participantId}/diary${suffix}`));
+}
+
+export async function createDiaryEntry(
+  participantId: string,
+  input: CreateDiaryEntryRequest,
+): Promise<DiaryEntry> {
+  return z
+    .object({ entry: diaryEntrySchema })
+    .parse(
+      await request(`/v1/participants/${participantId}/diary`, { method: 'POST', body: input }),
+    ).entry;
+}
+
+export async function updateDiaryEntry(
+  entryId: string,
+  input: UpdateDiaryEntryRequest,
+): Promise<DiaryEntry> {
+  return z
+    .object({ entry: diaryEntrySchema })
+    .parse(await request(`/v1/diary-entries/${entryId}`, { method: 'PATCH', body: input })).entry;
+}
+
+export async function deleteDiaryEntry(entryId: string): Promise<void> {
+  await request(`/v1/diary-entries/${entryId}`, { method: 'DELETE' });
+}
+
+export async function listDiaryRevisions(entryId: string): Promise<DiaryRevision[]> {
+  return z
+    .object({ revisions: z.array(diaryRevisionSchema) })
+    .parse(await request(`/v1/diary-entries/${entryId}/revisions`)).revisions;
+}
+
+export async function listDiaryCategories(includeInactive = false): Promise<DiaryCategory[]> {
+  const suffix = includeInactive ? '?includeInactive=true' : '';
+  return z
+    .object({ categories: z.array(diaryCategorySchema) })
+    .parse(await request(`/v1/diary-categories${suffix}`)).categories;
+}
+
+export async function createDiaryCategory(
+  input: CreateDiaryCategoryRequest,
+): Promise<DiaryCategory> {
+  return z
+    .object({ category: diaryCategorySchema })
+    .parse(await request('/v1/diary-categories', { method: 'POST', body: input })).category;
+}
+
+export async function updateDiaryCategory(
+  id: string,
+  input: UpdateDiaryCategoryRequest,
+): Promise<DiaryCategory> {
+  return z
+    .object({ category: diaryCategorySchema })
+    .parse(await request(`/v1/diary-categories/${id}`, { method: 'PATCH', body: input })).category;
+}
+
+/** The merged timeline (doc 04 §3), which is the participant's main screen. */
+export async function getTimeline(
+  participantId: string,
+  range: { from?: string; to?: string } = {},
+): Promise<{ items: TimelineItem[]; timeZone: string }> {
+  const params = new URLSearchParams();
+  if (range.from) params.set('from', range.from);
+  if (range.to) params.set('to', range.to);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  return z
+    .object({ items: z.array(timelineItemSchema), timeZone: z.string() })
+    .parse(await request(`/v1/participants/${participantId}/timeline${suffix}`));
+}
+
+// Attachments (doc 04 §9). Metadata first, then the bytes.
+export async function createAttachment(
+  participantId: string,
+  input: CreateAttachmentRequest,
+): Promise<Attachment> {
+  return z.object({ attachment: attachmentSchema }).parse(
+    await request(`/v1/participants/${participantId}/attachments`, {
+      method: 'POST',
+      body: input,
+    }),
+  ).attachment;
+}
+
+/**
+ * The bytes, as a raw body rather than multipart.
+ *
+ * This is the one call that does not go through `request`: it sends a Blob
+ * rather than JSON, and the envelope a multipart form would add carries
+ * nothing the URL does not already say.
+ */
+export async function uploadAttachmentContent(id: string, file: Blob): Promise<Attachment> {
+  const response = await fetch(`/api/v1/attachments/${id}/content`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-CSRF-Token': csrfToken(),
+    },
+    body: file,
+  });
+
+  const body: unknown = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const parsed = apiErrorSchema.safeParse(body);
+    if (parsed.success) {
+      const { code, message, details } = parsed.data.error;
+      throw new ApiRequestError(code, message, details);
+    }
+    throw new ApiRequestError('server_error', 'That file could not be uploaded.');
+  }
+
+  return z.object({ attachment: attachmentSchema }).parse(body).attachment;
+}
+
+export async function deleteAttachment(id: string): Promise<void> {
+  await request(`/v1/attachments/${id}`, { method: 'DELETE' });
+}
+
+/** Both go through the API with a scope check, never served statically. */
+export function attachmentUrl(id: string): string {
+  return `/api/v1/attachments/${id}`;
+}
+
+export function thumbnailUrl(id: string): string {
+  return `/api/v1/attachments/${id}/thumb`;
 }

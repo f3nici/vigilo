@@ -32,6 +32,20 @@
   --vigilo-not-expected: #8a867e;
   --vigilo-late: #7a4fb8;
   --vigilo-syncing: #0f6e6e;
+
+  /*
+   * Diary category colours. Muted on purpose: a category says what an entry is
+   * about, not how serious it is, and a red "medical" chip beside a green
+   * "activity" one would read as a severity scale. There is none.
+   */
+  --vigilo-cat-lavender: #7d6fa8;
+  --vigilo-cat-sky: #3c7ba3;
+  --vigilo-cat-teal: #2f7f76;
+  --vigilo-cat-sage: #5c8a52;
+  --vigilo-cat-sand: #96762f;
+  --vigilo-cat-peach: #b06a3c;
+  --vigilo-cat-rose: #a35068;
+  --vigilo-cat-slate: #5b5852;
 }
 
 .dark {
@@ -52,6 +66,15 @@
   --vigilo-not-expected: #7a766f;
   --vigilo-late: #b79be8;
   --vigilo-syncing: #4fc4c0;
+
+  --vigilo-cat-lavender: #b0a3d8;
+  --vigilo-cat-sky: #7fb5d4;
+  --vigilo-cat-teal: #6bbfb3;
+  --vigilo-cat-sage: #93c286;
+  --vigilo-cat-sand: #d0ac5e;
+  --vigilo-cat-peach: #e0a37a;
+  --vigilo-cat-rose: #dc93a5;
+  --vigilo-cat-slate: #b0ada6;
 }
 
 @theme inline {
@@ -72,6 +95,15 @@
   --color-state-not-expected: var(--vigilo-not-expected);
   --color-state-late: var(--vigilo-late);
   --color-state-syncing: var(--vigilo-syncing);
+
+  --color-cat-lavender: var(--vigilo-cat-lavender);
+  --color-cat-sky: var(--vigilo-cat-sky);
+  --color-cat-teal: var(--vigilo-cat-teal);
+  --color-cat-sage: var(--vigilo-cat-sage);
+  --color-cat-sand: var(--vigilo-cat-sand);
+  --color-cat-peach: var(--vigilo-cat-peach);
+  --color-cat-rose: var(--vigilo-cat-rose);
+  --color-cat-slate: var(--vigilo-cat-slate);
 
   --font-sans:
     'Inter var', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;

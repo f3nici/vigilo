@@ -4,14 +4,17 @@ Care records platform for a disability support team. Participant diaries and
 admin-defined observation checks, working offline. Ships as an installable PWA
 first, with native Android and iOS builds as the final phases.
 
-**Status: Phases 0 to 3 done.** Monorepo, Docker Compose and CI; identity,
+**Status: Phases 0 to 4 done.** Monorepo, Docker Compose and CI; identity,
 roles, TOTP, the break-glass CLI, the scope resolver, the audit log and the
 encryption layer; participant records with alerts, emergency contacts, emergency
 plans and assignments; check templates with versions and the field builder,
 per-participant schedules and segments, coverage, the materialiser and closer
-jobs, and entry recording with partial, late and edit-with-revision. There is no
-diary and no offline sync yet. **Phase 4 (diary) is next**, in
-`docs/09-roadmap.md`.
+jobs, and entry recording with partial, late and edit-with-revision; the diary
+with categories, occurred-at, per-entry visibility, edit revisions and admin
+soft delete, encrypted attachments with EXIF stripping and thumbnails, and the
+participant timeline merging checks and diary. There is no offline sync yet.
+**Phase 5 (PWA and offline sync) is next**, in `docs/09-roadmap.md`. It is the
+riskiest phase and the v1 line.
 
 ## Read before building
 
@@ -118,6 +121,12 @@ service container.
   silently. This cost time on CareLane, do not repeat it.
 - Publishing a check template version is irreversible. Existing entries stay
   bound to the version they were recorded against.
+- **The attachment volume must be writable by the `node` user.** The image
+  creates `/data/attachments` owned by it so a fresh named volume inherits
+  that, and the API refuses to start if it cannot write there. A root-owned
+  mount reads fine and fails only on the first photo somebody attaches.
+- **HEIC is refused** (D41). The app converts to JPEG in the browser first, so
+  an iPhone never hits it, but anything bypassing the app will.
 - Coverage recalculation can rewrite compliance history. It must preview before
   applying, and it is heavily audited.
 - Never point a store review build at production data. Use staging with seeded

@@ -86,6 +86,12 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, roles: ['admin', 'nurse'], title: 'Field builder' },
       },
       {
+        path: 'diary-categories',
+        name: 'diary-categories',
+        component: () => import('@/views/DiaryCategoriesView.vue'),
+        meta: { requiresAuth: true, roles: ['admin'], title: 'Diary categories' },
+      },
+      {
         path: 'users',
         name: 'users',
         component: () => import('@/views/UsersView.vue'),

@@ -22,7 +22,7 @@ import {
 } from 'drizzle-orm/pg-core';
 
 /**
- * Schema through Phase 3 (doc 03).
+ * Schema through Phase 4 (doc 03).
  *
  * `revision` on a syncable table is fed by one global sequence through a
  * trigger, not by the column default and not by the application. It is what
@@ -81,6 +81,32 @@ export const windowStatusEnum = pgEnum('check_window_status', [
   'not_expected',
 ]);
 export const entryStatusEnum = pgEnum('check_entry_status', ['partial', 'complete']);
+export const diaryCategoryColourEnum = pgEnum('diary_category_colour', [
+  'lavender',
+  'sky',
+  'teal',
+  'sage',
+  'sand',
+  'peach',
+  'rose',
+  'slate',
+]);
+export const diaryRevisionFieldEnum = pgEnum('diary_revision_field', [
+  'body',
+  'category',
+  'occurred_at',
+  'visibility',
+]);
+export const attachmentOwnerTypeEnum = pgEnum('attachment_owner_type', [
+  'diary_entry',
+  'incident',
+  'participant_photo',
+]);
+export const attachmentUploadStateEnum = pgEnum('attachment_upload_state', [
+  'pending',
+  'complete',
+  'failed',
+]);
 
 /** Single row, id always 1. Drives every window and "daily" calculation. */
 export const orgSettings = pgTable(
@@ -792,6 +818,154 @@ export const windowMissReasons = pgTable(
 );
 
 export type WindowMissReasonRow = typeof windowMissReasons.$inferSelect;
+
+/**
+ * Diary categories (doc 03 §7). Admin-configurable, seeded with the set from
+ * doc 01 §6, and deactivated rather than deleted so past entries keep the
+ * category they were filed under.
+ */
+export const diaryCategories = pgTable(
+  'diary_categories',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    slug: text('slug').notNull().unique(),
+    label: text('label').notNull(),
+    colour: diaryCategoryColourEnum('colour').notNull().default('slate'),
+    sortOrder: smallint('sort_order').notNull().default(0),
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [index('diary_categories_revision_idx').on(table.revision)],
+);
+
+export type DiaryCategoryRow = typeof diaryCategories.$inferSelect;
+
+/**
+ * A diary entry (doc 03 §7).
+ *
+ * `occurred_at` is the time the thing happened and `recorded_at` is the time
+ * someone wrote it down. Keeping them apart is what lets a worker catch up at
+ * the end of a shift without the record claiming everything happened at once.
+ *
+ * `body_search_tsv` from doc 03 §7 is deliberately absent. An encrypted body
+ * cannot feed a tsvector, and A9 picks option (a): search is per participant
+ * over decrypted text, within the caller's scope.
+ */
+export const diaryEntries = pgTable(
+  'diary_entries',
+  {
+    /** Device-generated UUID v7, so a replayed outbox lands on one row. */
+    id: uuid('id').primaryKey(),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    categoryId: uuid('category_id')
+      .notNull()
+      .references(() => diaryCategories.id),
+    bodyEnc: encrypted('body_enc').notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    recordedBy: uuid('recorded_by').references(() => users.id),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Staff-controlled, default true (doc 01 §3.7). */
+    visibleToParticipant: boolean('visible_to_participant').notNull().default(true),
+    deviceId: uuid('device_id'),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    editCount: integer('edit_count').notNull().default(0),
+    /** Soft delete, admin only, audited. Nothing is removed (doc 04 §8). */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedBy: uuid('deleted_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('diary_entries_participant_idx').on(table.participantId, table.occurredAt),
+    index('diary_entries_revision_idx').on(table.revision),
+  ],
+);
+
+export type DiaryEntryRow = typeof diaryEntries.$inferSelect;
+
+/**
+ * Append-only edit history, the same rule as a check entry (doc 01 §6).
+ *
+ * Doc 03 §7 sketches this as one row holding an old and a new body plus an old
+ * and a new category. That shape has no room for a changed `occurred_at` or a
+ * flipped visibility toggle, both of which change what the record means, so
+ * this is one row per changed field instead and covers all four.
+ *
+ * The old and new values are encrypted together, because a history row holding
+ * the plaintext of an encrypted body would be a way around the encryption.
+ */
+export const diaryEntryRevisions = pgTable(
+  'diary_entry_revisions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    entryId: uuid('entry_id')
+      .notNull()
+      .references(() => diaryEntries.id, { onDelete: 'cascade' }),
+    field: diaryRevisionFieldEnum('field').notNull(),
+    valuesEnc: encrypted('values_enc').notNull(),
+    changedBy: uuid('changed_by').references(() => users.id),
+    changedAt: timestamp('changed_at', { withTimezone: true }).notNull().defaultNow(),
+    reason: text('reason'),
+  },
+  (table) => [index('diary_entry_revisions_entry_idx').on(table.entryId, table.changedAt)],
+);
+
+export type DiaryEntryRevisionRow = typeof diaryEntryRevisions.$inferSelect;
+
+/**
+ * Attachments (doc 03 §8, doc 07 §2).
+ *
+ * The bytes live on the encrypted volume, each file encrypted again under its
+ * own data key which is itself wrapped by the master key. `participant_id` is
+ * carried on the row so a scope check on a download needs no join, and a
+ * download is a per-request scope check, always.
+ *
+ * `storage_path` is relative, so the volume can move and object storage can
+ * replace it later without touching a row.
+ */
+export const attachments = pgTable(
+  'attachments',
+  {
+    /** Device-generated, so the bytes can follow the metadata later. */
+    id: uuid('id').primaryKey(),
+    ownerType: attachmentOwnerTypeEnum('owner_type').notNull(),
+    /** Null until the entry it belongs to exists, which is the upload order. */
+    ownerId: uuid('owner_id'),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    filename: text('filename').notNull(),
+    mimeType: text('mime_type').notNull(),
+    byteSize: bigint('byte_size', { mode: 'number' }).notNull(),
+    /** Of the plaintext, for integrity and later dedupe. */
+    sha256: text('sha256'),
+    storagePath: text('storage_path'),
+    /** Rendered on first request and kept, because re-rendering is not free. */
+    thumbnailPath: text('thumbnail_path'),
+    encryptionKeyEnc: encrypted('encryption_key_enc'),
+    width: integer('width'),
+    height: integer('height'),
+    uploadedBy: uuid('uploaded_by').references(() => users.id),
+    uploadState: attachmentUploadStateEnum('upload_state').notNull().default('pending'),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('attachments_owner_idx').on(table.ownerType, table.ownerId),
+    index('attachments_participant_idx').on(table.participantId),
+    index('attachments_revision_idx').on(table.revision),
+  ],
+);
+
+export type AttachmentRow = typeof attachments.$inferSelect;
 
 /**
  * How a device learns to download or purge a participant (doc 03 §11).

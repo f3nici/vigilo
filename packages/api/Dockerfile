@@ -36,6 +36,14 @@ COPY --from=build /repo/packages/api/dist packages/api/dist
 # Migrations are read at runtime, both to apply them and to answer /api/ready.
 COPY --from=build /repo/packages/api/drizzle packages/api/drizzle
 
+# The attachment volume mounts here. Created with the right owner in the image
+# so a fresh named volume inherits it: Docker copies ownership from the image
+# directory when it first populates an empty volume, and without this the
+# container runs as `node` against a root-owned mount and cannot write a single
+# photo.
+RUN mkdir -p /data/attachments && chown -R node:node /data
+VOLUME ["/data/attachments"]
+
 USER node
 WORKDIR /repo/packages/api
 EXPOSE 3000

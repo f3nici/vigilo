@@ -47,6 +47,27 @@ export function formatDateTime(iso: string): string {
   return Number.isNaN(parsed.getTime()) ? iso : dateTimeFormat.format(parsed);
 }
 
+/**
+ * The same, in the organisation's timezone.
+ *
+ * Doc 06 §7: the org timezone is the only one staff ever see. A device set to
+ * another zone, or a worker who has travelled, must still read a record at the
+ * hour it was written, and the same entry must not say 17:27 on one tab and
+ * 19:27 on another.
+ */
+export function formatDateTimeIn(iso: string, timeZone: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return iso;
+  return new Intl.DateTimeFormat('en-AU', {
+    timeZone,
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(parsed);
+}
+
 /** Whole years, the way a date of birth is read out. */
 export function ageInYears(dateOfBirth: string, now = new Date()): number | null {
   const born = new Date(`${dateOfBirth}T00:00:00`);

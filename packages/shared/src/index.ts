@@ -7,9 +7,11 @@
  */
 
 export * from './access.js';
+export * from './attachments.js';
 export * from './auth.js';
 export * from './checks.js';
 export * from './coverage.js';
+export * from './diary.js';
 export * from './errors.js';
 export * from './health.js';
 export * from './intervals.js';
@@ -19,5 +21,6 @@ export * from './roles.js';
 export * from './schedules.js';
 export * from './templates.js';
 export * from './time.js';
+export * from './timeline.js';
 export * from './timezone.js';
 export * from './windows.js';

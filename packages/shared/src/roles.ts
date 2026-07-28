@@ -102,3 +102,43 @@ export function canBackfillPastCutoff(role: Role): boolean {
 export function canManageReasonCodes(role: Role): boolean {
   return role === 'admin';
 }
+
+/**
+ * Diary (doc 01 §3.6, §6).
+ *
+ * Every staff role writes in the diary. A self-access account reads its own
+ * visible entries and writes nothing, which is why this is the same shape as
+ * `canRecordChecks` rather than a reference to it: they are separate rules that
+ * happen to agree today.
+ */
+export function canRecordDiary(role: Role): boolean {
+  return role !== 'participant';
+}
+
+/** As with checks, changing what someone else wrote needs oversight. */
+export function canEditOthersDiary(role: Role): boolean {
+  return role === 'admin' || role === 'team_leader' || role === 'nurse';
+}
+
+/**
+ * Deleting a diary entry is admin-only and is a soft delete (doc 04 §8).
+ * Nothing is hard-deleted while retention applies, so this hides the entry and
+ * leaves the record, and it is audited.
+ */
+export function canDeleteDiary(role: Role): boolean {
+  return role === 'admin';
+}
+
+export function canManageDiaryCategories(role: Role): boolean {
+  return role === 'admin';
+}
+
+/**
+ * Who decides whether the participant sees an entry.
+ *
+ * Staff-controlled, per doc 01 §3.7: the person the entry is about cannot
+ * change their own visibility flag, or the toggle would mean nothing.
+ */
+export function canSetDiaryVisibility(role: Role): boolean {
+  return role !== 'participant';
+}

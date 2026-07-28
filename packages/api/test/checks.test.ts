@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { sql } from 'drizzle-orm';
-import { addDays, localDateOf } from '@vigilo/shared';
+import { addDays, localDateOf, weekdayOf } from '@vigilo/shared';
 import {
   assign,
   createHarness,
@@ -51,6 +51,24 @@ describe('checks', () => {
   }
 
   const today = () => localDateOf(new Date(), MELBOURNE);
+
+  /**
+   * The next occurrence of a weekday, today included.
+   *
+   * Deliberately not a fixed date. A coverage pattern applies from the day it
+   * is set (D38), so a preview of a date in the past sees no pattern at all
+   * and every window comes back not-expected. A hard-coded date passes until
+   * the clock rolls past it and then fails for a reason that has nothing to do
+   * with coverage.
+   */
+  function nextWeekday(weekday: number): string {
+    let date = today();
+    for (let step = 0; step < 7; step += 1) {
+      if (weekdayOf(date) === weekday) return date;
+      date = addDays(date, 1);
+    }
+    throw new Error(`No ${weekday} in the next week, which cannot happen`);
+  }
 
   type Fixture = {
     admin: SignedIn;
@@ -120,7 +138,7 @@ describe('checks', () => {
         admin,
         'post',
         `/api/v1/participants/${participantId}/schedules/preview`,
-      ).send({ date: '2026-07-27', segments: DAY_AND_NIGHT });
+      ).send({ date: nextWeekday(1), segments: DAY_AND_NIGHT });
 
       expect(response.status).toBe(200);
       expect(response.body.timeZone).toBe(MELBOURNE);
@@ -153,7 +171,7 @@ describe('checks', () => {
         admin,
         'post',
         `/api/v1/participants/${participantId}/schedules/preview`,
-      ).send({ date: '2026-07-27', segments: DAY_AND_NIGHT });
+      ).send({ date: nextWeekday(1), segments: DAY_AND_NIGHT });
 
       const codes = (response.body.warnings as { code: string }[]).map((one) => one.code);
       expect(codes).toContain('uneven_division');
@@ -202,12 +220,11 @@ describe('checks', () => {
         })),
       });
 
-      // 2026-07-26 is a Sunday.
       const sunday = await api(
         admin,
         'post',
         `/api/v1/participants/${participantId}/schedules/preview`,
-      ).send({ date: '2026-07-26', segments: DAY_AND_NIGHT });
+      ).send({ date: nextWeekday(0), segments: DAY_AND_NIGHT });
 
       expect((sunday.body.windows as { expected: boolean }[]).every((one) => !one.expected)).toBe(
         true,
@@ -218,7 +235,7 @@ describe('checks', () => {
         admin,
         'post',
         `/api/v1/participants/${participantId}/schedules/preview`,
-      ).send({ date: '2026-07-27', segments: DAY_AND_NIGHT });
+      ).send({ date: nextWeekday(1), segments: DAY_AND_NIGHT });
 
       const expected = (monday.body.windows as { expected: boolean }[]).filter(
         (one) => one.expected,
@@ -1113,7 +1130,7 @@ describe('checks', () => {
         admin,
         'post',
         `/api/v1/participants/${participantId}/schedules/preview`,
-      ).send({ date: '2026-07-27', segments: DAY_AND_NIGHT });
+      ).send({ date: nextWeekday(1), segments: DAY_AND_NIGHT });
       expect(preview.body.windows).toHaveLength(10);
 
       const yesterday = addDays(today(), -1);

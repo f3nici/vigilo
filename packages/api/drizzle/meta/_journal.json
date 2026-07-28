@@ -64,6 +64,20 @@
       "when": 1785150802889,
       "tag": "0008_check_revisions_and_reason_codes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785228982917,
+      "tag": "0009_diary_and_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785228983917,
+      "tag": "0010_diary_triggers_and_categories",
+      "breakpoints": true
     }
   ]
 }
