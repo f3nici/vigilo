@@ -26,6 +26,7 @@ const CURSOR_KEY = 'sync.cursor';
 const LAST_SYNC_KEY = 'sync.last-at';
 const OUTBOX_SEQ_KEY = 'outbox.seq';
 const USER_KEY = 'session.user-id';
+const COLLEAGUES_KEY = 'staff.colleagues';
 
 type MetaRow = { value: string };
 type SealedRow = { sealed: string };
@@ -129,6 +130,32 @@ export class LocalStore {
   async isEmpty(): Promise<boolean> {
     const rows = await this.db.all<{ count: number }>('SELECT count(*) AS count FROM participants');
     return (rows[0]?.count ?? 0) === 0;
+  }
+
+  /**
+   * The staff list a witness is picked from (doc 01 §7.2).
+   *
+   * Held sealed like everything else, because a list of who works here is
+   * still a list of people. It is cached rather than synced: it changes rarely,
+   * it is not a participant record, and a device that has never been online has
+   * nothing to sign off yet anyway.
+   */
+  async setColleagues(list: unknown): Promise<void> {
+    await this.db.run(
+      `INSERT INTO meta (key, value) VALUES (?, ?)
+       ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+      [COLLEAGUES_KEY, await this.store.seal(JSON.stringify(list))],
+    );
+  }
+
+  async colleagues<T>(): Promise<T[]> {
+    const sealed = await this.meta(COLLEAGUES_KEY);
+    if (sealed === null) return [];
+    try {
+      return JSON.parse(await this.store.unseal(sealed)) as T[];
+    } catch {
+      return [];
+    }
   }
 
   /* ---------------------------------------------------------- applying sync */
@@ -347,6 +374,71 @@ export class LocalStore {
           ],
         );
 
+      case 'medication':
+        return sqlUpsert(
+          'medications',
+          ['id', 'participant_id', 'name', 'is_prn', 'active', 'revision', 'sealed'],
+          [
+            change.id,
+            change.row.participantId,
+            change.row.name,
+            change.row.isPrn ? 1 : 0,
+            change.row.active ? 1 : 0,
+            change.revision,
+            sealed,
+          ],
+        );
+
+      case 'medication_dose':
+        return sqlUpsert(
+          'medication_doses',
+          [
+            'id',
+            'participant_id',
+            'medication_id',
+            'due_at',
+            'status',
+            'expected',
+            'administration_id',
+            'revision',
+            'sealed',
+          ],
+          [
+            change.id,
+            change.row.participantId,
+            change.row.medicationId,
+            change.row.dueAt,
+            change.row.status,
+            change.row.expected ? 1 : 0,
+            change.row.administrationId,
+            change.revision,
+            sealed,
+          ],
+        );
+
+      case 'medication_administration':
+        return sqlUpsert(
+          'medication_administrations',
+          [
+            'id',
+            'participant_id',
+            'medication_id',
+            'dose_id',
+            'administered_at',
+            'revision',
+            'sealed',
+          ],
+          [
+            change.id,
+            change.row.participantId,
+            change.row.medicationId,
+            change.row.doseId,
+            change.row.administeredAt,
+            change.revision,
+            sealed,
+          ],
+        );
+
       case 'attachment':
         return sqlUpsert(
           'attachments',
@@ -453,6 +545,102 @@ export class LocalStore {
       windowId,
     ]);
     return (await this.unseal<T>(rows))[0] ?? null;
+  }
+
+  async dosesBetween<T>(from: string, to: string): Promise<T[]> {
+    return this.unseal<T>(
+      await this.db.all<SealedRow>(
+        'SELECT sealed FROM medication_doses WHERE due_at >= ? AND due_at < ? ORDER BY due_at',
+        [from, to],
+      ),
+    );
+  }
+
+  async dose<T>(id: string): Promise<T | null> {
+    const rows = await this.db.all<SealedRow>('SELECT sealed FROM medication_doses WHERE id = ?', [
+      id,
+    ]);
+    return (await this.unseal<T>(rows))[0] ?? null;
+  }
+
+  async medicationsFor<T>(participantId: string): Promise<T[]> {
+    return this.unseal<T>(
+      await this.db.all<SealedRow>(
+        'SELECT sealed FROM medications WHERE participant_id = ? AND active = 1 ORDER BY is_prn, name',
+        [participantId],
+      ),
+    );
+  }
+
+  async administrationsFor<T>(participantId: string, limit = 100): Promise<T[]> {
+    return this.unseal<T>(
+      await this.db.all<SealedRow>(
+        `SELECT sealed FROM medication_administrations
+         WHERE participant_id = ? ORDER BY administered_at DESC LIMIT ?`,
+        [participantId, limit],
+      ),
+    );
+  }
+
+  /**
+   * Writes a sign-off the worker just made, before the server has seen it.
+   *
+   * Same rule as a check entry: the row and the outbox operation land in one
+   * transaction, so the screen updates instantly and the record is queued in
+   * the same breath. The server's own version replaces this on the next pull,
+   * which settles any disagreement about lateness.
+   */
+  async recordSignOffLocally(input: {
+    administration: {
+      id: string;
+      participantId: string;
+      medicationId: string;
+      doseId: string | null;
+      administeredAt: string;
+    };
+    doseStatus: string | null;
+    sealedAdministration: unknown;
+    sealedDose: unknown | null;
+  }): Promise<void> {
+    const statements: SqlStatement[] = [
+      sqlUpsert(
+        'medication_administrations',
+        [
+          'id',
+          'participant_id',
+          'medication_id',
+          'dose_id',
+          'administered_at',
+          'revision',
+          'sealed',
+        ],
+        [
+          input.administration.id,
+          input.administration.participantId,
+          input.administration.medicationId,
+          input.administration.doseId,
+          input.administration.administeredAt,
+          0,
+          await this.store.seal(JSON.stringify(input.sealedAdministration)),
+        ],
+      ),
+    ];
+
+    if (input.administration.doseId !== null && input.doseStatus !== null) {
+      statements.push({
+        sql: `UPDATE medication_doses
+              SET status = ?, administration_id = ?, sealed = ?
+              WHERE id = ?`,
+        params: [
+          input.doseStatus,
+          input.administration.id,
+          await this.store.seal(JSON.stringify(input.sealedDose)),
+          input.administration.doseId,
+        ],
+      });
+    }
+
+    await this.db.transaction(statements);
   }
 
   /**
@@ -739,6 +927,10 @@ function entityIdOf(operation: OutboxOperation): string {
       return operation.payload.id;
     case 'diary_entry.update':
       return operation.entryId;
+    case 'medication.sign_off':
+      return operation.payload.id;
+    case 'medication.prn':
+      return operation.payload.id;
     case 'attachment.create':
       return operation.payload.id;
   }

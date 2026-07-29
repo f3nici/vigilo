@@ -1,16 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import {
+  doseSortRank,
   needsMissReason,
   participantShortName,
   windowSortRank,
   type CheckWindow,
+  type MedicationDose,
   type ParticipantSummary,
 } from '@vigilo/shared';
 import WindowRow from '@/components/WindowRow.vue';
+import DoseRow from '@/components/DoseRow.vue';
+import DoseSignOff from '@/components/DoseSignOff.vue';
 import FormError from '@/components/FormError.vue';
 import { ApiRequestError } from '@/api/client';
-import { readToday } from '@/lib/records';
+import { readDueDoses, readToday } from '@/lib/records';
 import { useOfflineStore } from '@/stores/offline';
 
 /**
@@ -26,6 +30,8 @@ import { useOfflineStore } from '@/stores/offline';
 const offline = useOfflineStore();
 
 const windows = ref<CheckWindow[]>([]);
+const doses = ref<MedicationDose[]>([]);
+const signingOff = ref<MedicationDose | null>(null);
 const participants = ref<ParticipantSummary[]>([]);
 const timeZone = ref('Australia/Melbourne');
 const loading = ref(true);
@@ -90,6 +96,7 @@ async function load(): Promise<void> {
     windows.value = today.windows;
     timeZone.value = today.timeZone;
     participants.value = today.participants;
+    doses.value = (await readDueDoses()).doses;
   } catch (err) {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not load today.';
   } finally {
@@ -105,6 +112,37 @@ watch(
   () => offline.lastSyncAt,
   () => void load(),
 );
+
+/**
+ * Doses still owed an answer, above the checks.
+ *
+ * Only the open and the missed ones: a dose already signed off belongs on the
+ * participant screen, not on the list of what somebody has to do next. A
+ * medication that has not been given is more urgent than a check that has not
+ * been recorded, so it sits at the top.
+ */
+function groupDoses(predicate: (dose: MedicationDose) => boolean): MedicationDose[] {
+  return doses.value
+    .filter(predicate)
+    .sort(
+      (a, b) =>
+        doseSortRank(a) - doseSortRank(b) ||
+        new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime(),
+    );
+}
+
+/** Past its grace period with nobody answering it. The top of the screen. */
+const dosesOverdue = computed(() => groupDoses((dose) => dose.status === 'missed'));
+
+const dosesDue = computed(() => groupDoses((dose) => dose.status === 'pending'));
+
+const anyDoses = computed(() => dosesOverdue.value.length + dosesDue.value.length > 0);
+
+async function afterSignOff(): Promise<void> {
+  signingOff.value = null;
+  await load();
+  void offline.sync();
+}
 
 const today = computed(() =>
   new Intl.DateTimeFormat('en-AU', {
@@ -127,7 +165,16 @@ const today = computed(() =>
 
     <p v-if="loading" class="text-text-secondary">Loading.</p>
 
-    <div v-else-if="windows.length === 0" class="card p-6">
+    <DoseSignOff
+      v-else-if="signingOff"
+      :dose="signingOff"
+      :participant-id="signingOff.participantId"
+      :time-zone="timeZone"
+      @saved="afterSignOff"
+      @cancel="signingOff = null"
+    />
+
+    <div v-else-if="windows.length === 0 && !anyDoses" class="card p-6">
       <p class="font-medium">Nothing due.</p>
       <p class="text-text-secondary mt-1">
         Check windows appear here once a participant you are assigned to has a schedule.
@@ -135,6 +182,33 @@ const today = computed(() =>
     </div>
 
     <template v-else>
+      <section v-if="dosesOverdue.length > 0" class="space-y-2">
+        <h2 class="text-state-missed text-lg font-semibold">Medication not signed off</h2>
+        <p class="text-text-secondary text-sm">
+          These are past their time with nothing recorded against them.
+        </p>
+        <DoseRow
+          v-for="dose in dosesOverdue"
+          :key="dose.id"
+          :dose="dose"
+          :time-zone="timeZone"
+          :participant-name="names.get(dose.participantId)"
+          @open="signingOff = $event"
+        />
+      </section>
+
+      <section v-if="dosesDue.length > 0" class="space-y-2">
+        <h2 class="text-lg font-semibold">Medication due</h2>
+        <DoseRow
+          v-for="dose in dosesDue"
+          :key="dose.id"
+          :dose="dose"
+          :time-zone="timeZone"
+          :participant-name="names.get(dose.participantId)"
+          @open="signingOff = $event"
+        />
+      </section>
+
       <section v-if="needsAttention.length > 0" class="space-y-2">
         <h2 class="text-state-missed text-lg font-semibold">Needs attention</h2>
         <p class="text-text-secondary text-sm">

@@ -28,6 +28,9 @@ import {
   diaryEntries,
   emergencyContacts,
   emergencyPlans,
+  medicationAdministrations,
+  medicationDoses,
+  medications,
   missedReasonCodes,
   participantAlerts,
   participants,
@@ -49,6 +52,8 @@ import { toDiaryCategory, diaryEntriesByIds, createDiaryEntry, updateDiaryEntry 
 import { createAttachment, toAttachment } from './attachments.js';
 import { missReasonsByWindowIds, toCheckEntry, windowsByIds } from './windows.js';
 import { putEntry, putMissReason } from './entries.js';
+import { medicationsByIds } from './medications.js';
+import { administrationsByIds, dosesByIds, recordPrn, signOffDose } from './doses.js';
 import { getOrgSettings } from './org.js';
 import type { AuditActor } from './audit.js';
 
@@ -301,6 +306,21 @@ function sources(now: Date): Source[] {
       },
     },
     {
+      entity: 'medication',
+      table: medications,
+      id: medications.id,
+      participantId: medications.participantId,
+      revision: medications.revision,
+      load: async (db, keyRing, keys) =>
+        byId(
+          await medicationsByIds(
+            db,
+            keyRing,
+            keys.map((key) => key.id),
+          ),
+        ),
+    },
+    {
       entity: 'missed_reason_code',
       table: missedReasonCodes,
       id: missedReasonCodes.id,
@@ -436,6 +456,45 @@ function sources(now: Date): Source[] {
           ),
         );
       },
+    },
+    {
+      entity: 'medication_dose',
+      table: medicationDoses,
+      id: medicationDoses.id,
+      participantId: medicationDoses.participantId,
+      revision: medicationDoses.revision,
+      // The same seven days back to seven days forward as check windows, and
+      // for the same reason: a device that has been offline a week still has
+      // doses to sign off, and a phone does not accumulate a year of them.
+      extra: () =>
+        and(
+          gte(medicationDoses.dueAt, windowRange.from),
+          lt(medicationDoses.dueAt, windowRange.to),
+        ),
+      load: async (db, keyRing, keys) =>
+        byId(
+          await dosesByIds(
+            db,
+            keyRing,
+            keys.map((key) => key.id),
+          ),
+        ),
+    },
+    {
+      entity: 'medication_administration',
+      table: medicationAdministrations,
+      id: medicationAdministrations.id,
+      participantId: medicationAdministrations.participantId,
+      revision: medicationAdministrations.revision,
+      extra: () => and(gte(medicationAdministrations.administeredAt, cutoff)),
+      load: async (db, keyRing, keys) =>
+        byId(
+          await administrationsByIds(
+            db,
+            keyRing,
+            keys.map((key) => key.id),
+          ),
+        ),
     },
     {
       entity: 'diary_entry',
@@ -814,6 +873,40 @@ async function dispatch(
       };
     }
 
+    case 'medication.sign_off': {
+      assertPushScope(scope, operation.participantId);
+      const { administration } = await signOffDose(
+        db,
+        keyRing,
+        operation.doseId,
+        operation.payload,
+        { userId: principal.userId, role: principal.role, deviceId: principal.deviceId },
+        actor,
+        { recordedOffline: true },
+      );
+      return {
+        entityId: administration.id,
+        revision: await revisionOf(db, medicationAdministrations, administration.id),
+      };
+    }
+
+    case 'medication.prn': {
+      assertPushScope(scope, operation.participantId);
+      const administration = await recordPrn(
+        db,
+        keyRing,
+        operation.participantId,
+        operation.payload,
+        { userId: principal.userId, role: principal.role, deviceId: principal.deviceId },
+        actor,
+        { recordedOffline: true },
+      );
+      return {
+        entityId: administration.id,
+        revision: await revisionOf(db, medicationAdministrations, administration.id),
+      };
+    }
+
     case 'diary_entry.create': {
       assertPushScope(scope, operation.participantId);
       const entry = await createDiaryEntry(
@@ -885,7 +978,12 @@ function assertPushScope(scope: Scope, participantId: string): void {
 
 async function revisionOf(
   db: Database,
-  table: typeof checkEntries | typeof diaryEntries | typeof attachments | typeof windowMissReasons,
+  table:
+    | typeof checkEntries
+    | typeof diaryEntries
+    | typeof attachments
+    | typeof windowMissReasons
+    | typeof medicationAdministrations,
   id: string,
 ): Promise<number> {
   const [row] = await db

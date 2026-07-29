@@ -4,7 +4,7 @@ Care records platform for a disability support team. Participant diaries and
 admin-defined observation checks, working offline. Ships as an installable PWA
 first, with native Android and iOS builds as the final phases.
 
-**Status: Phases 0 to 6 done.** Phase 5 was the v1 line and everything since is
+**Status: Phases 0 to 7 done.** Phase 5 was the v1 line and everything since is
 additive. Monorepo, Docker Compose and CI; identity, roles, TOTP, the
 break-glass CLI, the scope resolver, the audit log and the encryption layer;
 participant records with alerts, emergency contacts, emergency plans and
@@ -15,9 +15,12 @@ with categories, occurred-at, per-entry visibility, edit revisions and admin
 soft delete, encrypted attachments with EXIF stripping and thumbnails, and the
 participant timeline; the installable PWA with a local SQLite database over
 OPFS, WebAuthn or PIN unlock, the revision-cursor sync, the idempotent outbox,
-the attachment queue and Web Push; and reports: the daily PDF, trends with
-gaps preserved, the compliance report and audited CSV exports.
-**Phase 7 (medications) is next**, in `docs/09-roadmap.md`.
+the attachment queue and Web Push; reports: the daily PDF, trends with gaps
+preserved, the compliance report and audited CSV exports; and the medication
+administration record with materialised doses on the same coverage rules,
+sign-off with notes and witnesses, PRN recording and offline sign-off through
+the existing outbox.
+**Phase 8 (care plans and incidents) is next**, in `docs/09-roadmap.md`.
 
 ## Read before building
 
@@ -41,6 +44,10 @@ wins.
 - **Nothing is hard-deleted** while retention applies. Soft delete or archive.
 - **The audit log is append-only** and hash-chained. The app database role has no
   UPDATE or DELETE on it. Views are logged, not only writes.
+- **Doses are generated server-side only, like windows,** and never for a time
+  that has already passed (D59). A missed dose says a person did not get their
+  medication, so one invented for a time before the chart existed blames staff
+  for a dose nobody was asked for.
 - **Windows are generated server-side only.** Devices never create them. The
   grid is fixed and admin-configured (anchor time, window length, segments per
   time of day). It never rolls forward from the last recorded check.
@@ -128,6 +135,13 @@ service container.
   creates `/data/attachments` owned by it so a fresh named volume inherits
   that, and the API refuses to start if it cannot write there. A root-owned
   mount reads fine and fails only on the first photo somebody attaches.
+- **A medication sign-off is never deleted.** The app database role has no
+  DELETE on `medication_administrations`, enforced by a grant, and there is no
+  route that would use one.
+- **Medication has no clinical checking and never will.** No interactions, no
+  maximum daily totals, no dose validation. A dose is text transcribed off a
+  label, and software that does arithmetic on doses is software that can get a
+  dose wrong.
 - **HEIC is refused** (D41). The app converts to JPEG in the browser first, so
   an iPhone never hits it, but anything bypassing the app will.
 - **One tab owns the local database** (D47). The `opfs-sahpool` VFS takes

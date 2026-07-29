@@ -107,6 +107,22 @@ export const attachmentUploadStateEnum = pgEnum('attachment_upload_state', [
   'complete',
   'failed',
 ]);
+export const administrationStatusEnum = pgEnum('medication_administration_status', [
+  'given',
+  'refused',
+  'withheld',
+  'not_required',
+  'self_administered',
+]);
+export const doseStatusEnum = pgEnum('medication_dose_status', [
+  'pending',
+  'given',
+  'refused',
+  'withheld',
+  'not_required',
+  'self_administered',
+  'missed',
+]);
 
 /** Single row, id always 1. Drives every window and "daily" calculation. */
 export const orgSettings = pgTable(
@@ -118,6 +134,12 @@ export const orgSettings = pgTable(
     retentionYears: smallint('retention_years').notNull().default(7),
     lateEntryCutoffMinutes: integer('late_entry_cutoff_minutes').notNull().default(1440),
     windowWarningMinutes: integer('window_warning_minutes').notNull().default(20),
+    /**
+     * How long after a due time a dose is still simply due. A check has a
+     * window with two ends; a dose has one instant, so without this every dose
+     * would be missed the moment it came due.
+     */
+    medicationGraceMinutes: integer('medication_grace_minutes').notNull().default(60),
     escalationDelayMinutes: integer('escalation_delay_minutes').notNull().default(30),
     sessionIdleMinutesWeb: integer('session_idle_minutes_web').notNull().default(60),
     sessionIdleMinutesMobile: integer('session_idle_minutes_mobile').notNull().default(720),
@@ -966,6 +988,175 @@ export const attachments = pgTable(
 );
 
 export type AttachmentRow = typeof attachments.$inferSelect;
+
+/* -------------------------------------------------------------- medications */
+
+/**
+ * The medication administration record (doc 03 §9, doc 01 §7.2).
+ *
+ * Deliberately the same four-table shape as checks: a definition, a schedule,
+ * a materialised due list and a sign-off. Everything built for the check grid,
+ * coverage and the offline outbox included, applies here unchanged, and a
+ * second design would only be a second thing that can drift.
+ *
+ * `dose` is text, not a number and a unit. It is transcribed off a label and
+ * has to survive the trip exactly: "half a sachet", "1 to 2 tablets". Splitting
+ * it would invite the software to convert or total it, and software that does
+ * arithmetic on doses is software that can get a dose wrong.
+ */
+export const medications = pgTable(
+  'medications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    form: text('form'),
+    dose: text('dose').notNull(),
+    route: text('route'),
+    /** Free text about a person's medication, so encrypted (doc 07 §3). */
+    instructionsEnc: encrypted('instructions_enc'),
+    isPrn: boolean('is_prn').notNull().default(false),
+    startDate: date('start_date').notNull(),
+    endDate: date('end_date'),
+    requiresWitness: boolean('requires_witness').notNull().default(false),
+    active: boolean('active').notNull().default(true),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('medications_participant_idx').on(table.participantId, table.active),
+    index('medications_revision_idx').on(table.revision),
+  ],
+);
+
+export type MedicationRow = typeof medications.$inferSelect;
+
+/** One due time. Null weekdays means every day, as with a check segment. */
+export const medicationSchedules = pgTable(
+  'medication_schedules',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    medicationId: uuid('medication_id')
+      .notNull()
+      .references(() => medications.id, { onDelete: 'cascade' }),
+    timeOfDay: time('time_of_day').notNull(),
+    weekdays: smallint('weekdays').array(),
+    activeFrom: date('active_from'),
+    activeTo: date('active_to'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('medication_schedules_medication_idx').on(table.medicationId),
+    index('medication_schedules_revision_idx').on(table.revision),
+  ],
+);
+
+export type MedicationScheduleRow = typeof medicationSchedules.$inferSelect;
+
+/**
+ * Materialised due doses, the medication counterpart of a check window.
+ *
+ * `expected` is resolved from the same coverage rules the grid uses, so a dose
+ * the family gives is not a dose the team missed (doc 01 §7.2). `status` is
+ * derived by the shared state machine on both sides, never invented here.
+ */
+export const medicationDoses = pgTable(
+  'medication_doses',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    medicationId: uuid('medication_id')
+      .notNull()
+      .references(() => medications.id, { onDelete: 'cascade' }),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    scheduleId: uuid('schedule_id').references(() => medicationSchedules.id, {
+      onDelete: 'set null',
+    }),
+    dueAt: timestamp('due_at', { withTimezone: true }).notNull(),
+    expected: boolean('expected').notNull().default(true),
+    coverageReason: text('coverage_reason'),
+    status: doseStatusEnum('status').notNull().default('pending'),
+    isLate: boolean('is_late').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    // The due list is deterministic, so the materialiser finds the dose it
+    // already made rather than laying a second one beside it.
+    unique('medication_doses_grid_key').on(table.medicationId, table.dueAt),
+    index('medication_doses_participant_idx').on(table.participantId, table.dueAt),
+    index('medication_doses_closer_idx').on(table.status, table.dueAt),
+    index('medication_doses_revision_idx').on(table.revision),
+  ],
+);
+
+export type MedicationDoseRow = typeof medicationDoses.$inferSelect;
+
+/**
+ * The sign-off. Append-only in effect: nothing here is ever deleted, and the
+ * only field that can change afterwards is a PRN outcome that was not known at
+ * the time (doc 01 §7.2).
+ *
+ * `reason_enc` and `outcome_enc` are not in doc 03's column list. Doc 01 §7.2
+ * requires both for PRN, and folding three different things into one note
+ * column would make the CSV export and the daily report guess which was which
+ * (D57).
+ */
+export const medicationAdministrations = pgTable(
+  'medication_administrations',
+  {
+    /** UUID v7 from the device, so a replay updates rather than duplicates. */
+    id: uuid('id').primaryKey(),
+    doseId: uuid('dose_id').references(() => medicationDoses.id, { onDelete: 'set null' }),
+    medicationId: uuid('medication_id')
+      .notNull()
+      .references(() => medications.id, { onDelete: 'cascade' }),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    status: administrationStatusEnum('status').notNull(),
+    /** When the dose was given, which is not when it was typed in. */
+    administeredAt: timestamp('administered_at', { withTimezone: true }).notNull(),
+    /** Device time at sign-off. */
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+    /** Server time. Authoritative for lateness, because device clocks drift. */
+    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+    noteEnc: encrypted('note_enc'),
+    reasonEnc: encrypted('reason_enc'),
+    outcomeEnc: encrypted('outcome_enc'),
+    isLate: boolean('is_late').notNull().default(false),
+    recordedBy: uuid('recorded_by').references(() => users.id),
+    witnessedBy: uuid('witnessed_by').references(() => users.id),
+    deviceId: uuid('device_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    // One sign-off per scheduled dose. A PRN administration has no dose, and
+    // several of them in a day is exactly what PRN means, so the constraint is
+    // a partial index rather than a plain unique.
+    uniqueIndex('medication_administrations_dose_key')
+      .on(table.doseId)
+      .where(sql`${table.doseId} is not null`),
+    index('medication_administrations_participant_idx').on(
+      table.participantId,
+      table.administeredAt,
+    ),
+    index('medication_administrations_medication_idx').on(table.medicationId),
+    index('medication_administrations_revision_idx').on(table.revision),
+  ],
+);
+
+export type MedicationAdministrationRow = typeof medicationAdministrations.$inferSelect;
 
 /**
  * How a device learns to download or purge a participant (doc 03 §11).

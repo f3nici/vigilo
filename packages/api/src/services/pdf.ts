@@ -1,6 +1,12 @@
 import PDFDocument from 'pdfkit';
 import type { Readable } from 'node:stream';
-import { formatTimeOfDay, utcToZoned, type DailyReport, type DailyWindow } from '@vigilo/shared';
+import {
+  formatTimeOfDay,
+  utcToZoned,
+  type DailyDose,
+  type DailyReport,
+  type DailyWindow,
+} from '@vigilo/shared';
 
 /**
  * The daily participant report as a PDF (doc 01 §8.1).
@@ -53,7 +59,7 @@ export function renderDailyReport(report: DailyReport): Readable {
     ensureRoom(doc, 90);
     dayHeading(doc, day.date, report);
 
-    if (day.windows.length === 0 && day.diary.length === 0) {
+    if (day.windows.length === 0 && day.diary.length === 0 && day.medications.length === 0) {
       doc.font(BODY_ITALIC).fontSize(10).fillColor(MUTED);
       doc.text('Nothing was scheduled and nothing was recorded.');
       doc.moveDown(0.8);
@@ -63,6 +69,18 @@ export function renderDailyReport(report: DailyReport): Readable {
     for (const window of day.windows) {
       ensureRoom(doc, 60);
       windowBlock(doc, window, time);
+    }
+
+    if (day.medications.length > 0) {
+      ensureRoom(doc, 50);
+      doc.moveDown(0.3);
+      doc.font(HEADING).fontSize(10).fillColor(INK).text('Medication');
+      doc.moveDown(0.2);
+
+      for (const dose of day.medications) {
+        ensureRoom(doc, 44);
+        doseBlock(doc, dose, time);
+      }
     }
 
     if (day.diary.length > 0) {
@@ -230,6 +248,48 @@ function describe(window: DailyWindow): string {
   }
 }
 
+/**
+ * One medication line (doc 01 §8.1).
+ *
+ * The status is written in words rather than shown by colour, for the same
+ * reason the check blocks are: this gets photocopied, faxed and printed in
+ * black and white, and a colour that carries the only meaning does not survive
+ * any of that.
+ */
+function doseBlock(doc: PDFKit.PDFDocument, dose: DailyDose, time: (iso: string) => string): void {
+  const when = dose.dueAt === null ? time(dose.administeredAt!) : time(dose.dueAt);
+  const label = dose.isPrn ? `${when}  As needed` : when;
+
+  doc.font(BODY_BOLD).fontSize(10).fillColor(INK);
+  doc.text(`${label}   ${dose.medicationName} ${dose.dose}   ${dose.statusLabel}`);
+
+  doc.font(BODY).fontSize(10).fillColor(INK);
+  if (dose.reason !== null) doc.text(`Given because: ${dose.reason}`, { indent: 12 });
+  if (dose.note !== null) doc.text(dose.note, { indent: 12 });
+  if (dose.outcome !== null) doc.text(`Outcome: ${dose.outcome}`, { indent: 12 });
+
+  if (!dose.expected && dose.coverageReason !== null) {
+    doc.font(BODY_ITALIC).fontSize(9).fillColor(MUTED);
+    doc.text(dose.coverageReason, { indent: 12 });
+  }
+
+  const notes = [
+    dose.recordedByName ? `Signed off by ${dose.recordedByName}` : null,
+    dose.administeredAt !== null && dose.dueAt !== null
+      ? `given ${time(dose.administeredAt)}`
+      : null,
+    dose.isLate ? 'late' : null,
+    dose.witnessedByName ? `witnessed by ${dose.witnessedByName}` : null,
+  ].filter((one): one is string => one !== null);
+
+  if (notes.length > 0) {
+    doc.font(LABEL).fontSize(8).fillColor(MUTED);
+    doc.text(notes.join(' · '), { indent: 12 });
+  }
+
+  doc.moveDown(0.4);
+}
+
 function summary(doc: PDFKit.PDFDocument, report: DailyReport): void {
   ensureRoom(doc, 120);
   rule(doc);
@@ -247,6 +307,21 @@ function summary(doc: PDFKit.PDFDocument, report: DailyReport): void {
     ['Missed with no reason', String(total.missedWithoutReason)],
     ['Not scheduled', String(total.notExpected)],
   ];
+
+  const { doseTotal } = report;
+  if (doseTotal.expected > 0 || doseTotal.notExpected > 0) {
+    rows.push(
+      ['Doses due', String(doseTotal.expected)],
+      ['Given', String(doseTotal.given)],
+      ['Given late', String(doseTotal.givenLate)],
+      ['Refused', String(doseTotal.refused)],
+      ['Withheld', String(doseTotal.withheld)],
+      ['Self-administered', String(doseTotal.selfAdministered)],
+      ['Signed off as not required', String(doseTotal.notRequired)],
+      ['Missed', String(doseTotal.missed)],
+      ['Not scheduled for the team', String(doseTotal.notExpected)],
+    );
+  }
 
   doc.fontSize(10);
   for (const [label, value] of rows) {

@@ -784,6 +784,247 @@ describe('sync', () => {
     });
   });
 
+  /* ----------------------------------------------------------- medications */
+
+  describe('medications through sync', () => {
+    /** A scheduled medication with doses, plus a PRN one, for the fixture. */
+    async function chart(fixture: Fixture) {
+      const scheduled = await api(
+        fixture.admin,
+        'post',
+        `/api/v1/participants/${fixture.participantId}/medications`,
+      ).send({ name: 'Keppra', dose: '250 mg', startDate: today() });
+
+      const medicationId = scheduled.body.medication.id as string;
+      await api(fixture.admin, 'put', `/api/v1/medications/${medicationId}/schedules`).send({
+        schedules: [{ timeOfDay: '08:00' }, { timeOfDay: '20:00' }],
+      });
+
+      const prn = await api(
+        fixture.admin,
+        'post',
+        `/api/v1/participants/${fixture.participantId}/medications`,
+      ).send({ name: 'Panadol', dose: '500 mg', isPrn: true, startDate: today() });
+
+      const doses = await api(
+        fixture.worker,
+        'get',
+        `/api/v1/participants/${fixture.participantId}/medication-doses`,
+      );
+
+      return {
+        medicationId,
+        prnId: prn.body.medication.id as string,
+        doseId: doses.body.doses[0].id as string,
+      };
+    }
+
+    it('sends medications and doses down to a device in scope, and nobody else', async () => {
+      const fixture = await setUp();
+      await chart(fixture);
+
+      const response = await api(fixture.worker, 'get', '/api/v1/sync/bootstrap', fixture.deviceId);
+      const changes = response.body.changes as { entity: string; participantId: string | null }[];
+
+      const medications = changes.filter((change) => change.entity === 'medication');
+      const doses = changes.filter((change) => change.entity === 'medication_dose');
+
+      expect(medications).toHaveLength(2);
+      expect(doses.length).toBeGreaterThan(0);
+      expect(
+        [...medications, ...doses].every(
+          (change) => change.participantId === fixture.participantId,
+        ),
+      ).toBe(true);
+    });
+
+    it('carries the due times inside the medication rather than as their own rows', async () => {
+      // Schedules travel embedded, exactly as check segments do, so a phone
+      // holds one row per medication and cannot end up with a medication whose
+      // times arrived on a later page.
+      const fixture = await setUp();
+      await chart(fixture);
+
+      const response = await api(fixture.worker, 'get', '/api/v1/sync/bootstrap', fixture.deviceId);
+      const changes = response.body.changes as {
+        entity: string;
+        row: { name: string; schedules: unknown[] };
+      }[];
+
+      const keppra = changes.find(
+        (change) => change.entity === 'medication' && change.row.name === 'Keppra',
+      );
+      expect(keppra?.row.schedules).toHaveLength(2);
+    });
+
+    it('applies a sign-off pushed from a device', async () => {
+      const fixture = await setUp();
+      const { doseId } = await chart(fixture);
+      const now = new Date().toISOString();
+
+      const response = await push(fixture, [
+        {
+          opId: randomUUID(),
+          kind: 'medication.sign_off',
+          participantId: fixture.participantId,
+          doseId,
+          payload: {
+            id: randomUUID(),
+            status: 'given',
+            administeredAt: now,
+            recordedAt: now,
+            note: null,
+            witnessedBy: null,
+          },
+        },
+      ]);
+
+      expect(response.body.results[0].status).toBe('applied');
+
+      const doses = await api(
+        fixture.worker,
+        'get',
+        `/api/v1/participants/${fixture.participantId}/medication-doses`,
+      );
+      expect(doses.body.doses[0].status).toBe('given');
+    });
+
+    it('applies the same sign-off once however many times it arrives', async () => {
+      const fixture = await setUp();
+      const { doseId } = await chart(fixture);
+      const now = new Date().toISOString();
+
+      const operation: OutboxOperation = {
+        opId: randomUUID(),
+        kind: 'medication.sign_off',
+        participantId: fixture.participantId,
+        doseId,
+        payload: {
+          id: randomUUID(),
+          status: 'given',
+          administeredAt: now,
+          recordedAt: now,
+          note: null,
+          witnessedBy: null,
+        },
+      };
+
+      const first = await push(fixture, [operation]);
+      const second = await push(fixture, [operation]);
+
+      expect(first.body.results[0].status).toBe('applied');
+      expect(second.body.results[0].status).toBe('duplicate');
+
+      const rows = await h.ownerDb.execute<{ count: string }>(
+        sql`select count(*)::text as count from medication_administrations
+            where participant_id = ${fixture.participantId}`,
+      );
+      expect(rows[0]?.count).toBe('1');
+    });
+
+    it('applies a PRN dose pushed from a device', async () => {
+      const fixture = await setUp();
+      const { prnId } = await chart(fixture);
+      const now = new Date().toISOString();
+
+      const response = await push(fixture, [
+        {
+          opId: randomUUID(),
+          kind: 'medication.prn',
+          participantId: fixture.participantId,
+          payload: {
+            id: randomUUID(),
+            medicationId: prnId,
+            status: 'given',
+            administeredAt: now,
+            recordedAt: now,
+            reason: 'Reported a headache',
+            outcome: null,
+            note: null,
+            witnessedBy: null,
+          },
+        },
+      ]);
+
+      expect(response.body.results[0].status).toBe('applied');
+    });
+
+    it('accepts a sign-off recorded two days ago on a phone with no signal', async () => {
+      // D46 again: the back-fill cut-off asks when the worker was standing
+      // there, not when the record managed to reach us. Judging this by server
+      // time would refuse exactly the record offline support exists for.
+      const fixture = await setUp();
+      const { doseId } = await chart(fixture);
+
+      const twoDaysAgo = new Date(Date.now() - 48 * 3_600_000).toISOString();
+      await h.ownerDb.execute(sql`
+        update medication_doses set due_at = ${twoDaysAgo}::timestamptz
+        where id = ${doseId}
+      `);
+
+      const response = await push(fixture, [
+        {
+          opId: randomUUID(),
+          kind: 'medication.sign_off',
+          participantId: fixture.participantId,
+          doseId,
+          payload: {
+            id: randomUUID(),
+            status: 'given',
+            administeredAt: twoDaysAgo,
+            recordedAt: twoDaysAgo,
+            note: null,
+            witnessedBy: null,
+          },
+        },
+      ]);
+
+      expect(response.body.results[0].status).toBe('applied');
+    });
+
+    it('refuses a sign-off for a participant this user has never had', async () => {
+      const fixture = await setUp();
+      const other = await api(
+        fixture.admin,
+        'post',
+        `/api/v1/participants/${fixture.otherParticipantId}/medications`,
+      ).send({ name: 'Keppra', dose: '250 mg', startDate: today() });
+
+      await api(
+        fixture.admin,
+        'put',
+        `/api/v1/medications/${other.body.medication.id}/schedules`,
+      ).send({ schedules: [{ timeOfDay: '08:00' }] });
+
+      const doses = await api(
+        fixture.admin,
+        'get',
+        `/api/v1/participants/${fixture.otherParticipantId}/medication-doses`,
+      );
+
+      const now = new Date().toISOString();
+      const response = await push(fixture, [
+        {
+          opId: randomUUID(),
+          kind: 'medication.sign_off',
+          participantId: fixture.otherParticipantId,
+          doseId: doses.body.doses[0].id as string,
+          payload: {
+            id: randomUUID(),
+            status: 'given',
+            administeredAt: now,
+            recordedAt: now,
+            note: null,
+            witnessedBy: null,
+          },
+        },
+      ]);
+
+      expect(response.body.results[0].status).toBe('rejected');
+      expect(response.body.results[0].error.code).toBe('scope_denied');
+    });
+  });
+
   /* --------------------------------------------------------------- devices */
 
   describe('devices', () => {

@@ -104,6 +104,35 @@ export function canManageReasonCodes(role: Role): boolean {
 }
 
 /**
+ * Medications (doc 01 §7.2).
+ *
+ * Deciding what a person takes is a clinical judgement, so it sits with the
+ * nurse and the admin, exactly where care plan authorship sits. It is
+ * deliberately not with the team leader, who sets up when checks happen but
+ * does not decide what goes into somebody.
+ */
+export function canManageMedications(role: Role): boolean {
+  return role === 'admin' || role === 'nurse';
+}
+
+/**
+ * Every staff role signs off a dose, which is the whole point: the person
+ * standing there is the person who records it. A self-access account reads its
+ * own record and signs off nothing.
+ */
+export function canSignOffMedication(role: Role): boolean {
+  return role !== 'participant';
+}
+
+/**
+ * A witness is a second staff member confirming the dose, so a self-access
+ * account can never be one, whatever the UI offers.
+ */
+export function canWitnessMedication(role: Role): boolean {
+  return role !== 'participant';
+}
+
+/**
  * Diary (doc 01 §3.6, §6).
  *
  * Every staff role writes in the diary. A self-access account reads its own

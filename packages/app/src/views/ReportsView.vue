@@ -59,6 +59,12 @@ const names = computed(
 
 const isAdmin = computed(() => session.principal?.role === 'admin');
 
+function exportKindLabel(kind: string): string {
+  if (kind === 'checks') return 'Check entries';
+  if (kind === 'medications') return 'Medication sign-offs';
+  return 'Diary entries';
+}
+
 onMounted(async () => {
   from.value = addDays(today.value, -6);
   to.value = today.value;
@@ -357,8 +363,8 @@ function describeJob(job: ExportJob): string {
     <section v-else-if="tab === 'daily'" class="space-y-3">
       <p class="text-text-secondary">
         One participant's day, or a run of days: every check window with its values or its reason,
-        every diary entry, and who recorded each one. Suitable for handing to a family or an
-        auditor.
+        every medication dose and what happened to it, every diary entry, and who recorded each one.
+        Suitable for handing to a family or an auditor.
       </p>
 
       <p v-if="participantId === ''" class="card text-text-secondary p-4">
@@ -430,6 +436,7 @@ function describeJob(job: ExportJob): string {
             <select id="export-kind" v-model="exportKind" class="field">
               <option value="checks">Check entries</option>
               <option value="diary">Diary entries</option>
+              <option value="medications">Medication sign-offs</option>
             </select>
           </div>
           <button type="button" class="btn btn-primary" :disabled="busy" @click="runExport">
@@ -447,7 +454,7 @@ function describeJob(job: ExportJob): string {
               :key="job.id"
               class="card flex flex-wrap items-center gap-3 p-3 text-sm"
             >
-              <span>{{ job.kind === 'checks' ? 'Check entries' : 'Diary entries' }}</span>
+              <span>{{ exportKindLabel(job.kind) }}</span>
               <span class="text-text-secondary">{{ job.from }} to {{ job.to }}</span>
               <span class="text-text-secondary">{{ describeJob(job) }}</span>
               <a

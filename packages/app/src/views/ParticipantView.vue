@@ -17,6 +17,7 @@ import EmergencyPlanPanel from '@/components/EmergencyPlanPanel.vue';
 import ParticipantAssignments from '@/components/ParticipantAssignments.vue';
 import ParticipantChecks from '@/components/ParticipantChecks.vue';
 import ParticipantDiary from '@/components/ParticipantDiary.vue';
+import ParticipantMedications from '@/components/ParticipantMedications.vue';
 import ParticipantTimeline from '@/components/ParticipantTimeline.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
@@ -45,6 +46,7 @@ const confirmingArchive = ref(false);
 const tabs = [
   { key: 'timeline', label: 'Timeline' },
   { key: 'checks', label: 'Checks' },
+  { key: 'medication', label: 'Medication' },
   { key: 'diary', label: 'Diary' },
   { key: 'info', label: 'Info' },
 ] as const;
@@ -208,6 +210,8 @@ async function restore(): Promise<void> {
       <ParticipantTimeline v-if="tab === 'timeline'" :participant-id="participant.id" />
 
       <ParticipantChecks v-else-if="tab === 'checks'" :participant-id="participant.id" />
+
+      <ParticipantMedications v-else-if="tab === 'medication'" :participant-id="participant.id" />
 
       <ParticipantDiary
         v-else-if="tab === 'diary'"

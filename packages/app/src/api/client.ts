@@ -26,6 +26,9 @@ import {
   windowDetailSchema,
   participantDetailSchema,
   participantSummarySchema,
+  medicationAdministrationSchema,
+  medicationDoseSchema,
+  medicationSchema,
   loginResponseSchema,
   meResponseSchema,
   readyResponseSchema,
@@ -57,7 +60,16 @@ import {
   type EntryRevision,
   type ErrorCode,
   type HealthResponse,
+  type CreateMedicationRequest,
+  type Medication,
+  type MedicationAdministration,
+  type MedicationDose,
   type MissedReasonCode,
+  type PutMedicationSchedulesRequest,
+  type RecordPrnRequest,
+  type SignOffRequest,
+  type UpdateAdministrationRequest,
+  type UpdateMedicationRequest,
   type PreviewScheduleRequest,
   type PublishPreview,
   type PutCoveragePatternRequest,
@@ -1053,4 +1065,143 @@ export async function getExportJob(id: string): Promise<ExportJob> {
 
 export function exportDownloadUrl(id: string): string {
   return `/api/v1/exports/${id}/download`;
+}
+
+/* --------------------------------------------------------- medications */
+
+// Doc 04 §10.
+const medicationListSchema = z.object({ medications: z.array(medicationSchema) });
+const doseListSchema = z.object({ doses: z.array(medicationDoseSchema), timeZone: z.string() });
+const administrationListSchema = z.object({
+  administrations: z.array(medicationAdministrationSchema),
+  timeZone: z.string(),
+});
+
+export async function listMedications(
+  participantId: string,
+  options: { includeInactive?: boolean } = {},
+): Promise<Medication[]> {
+  const query = options.includeInactive ? '?includeInactive=true' : '';
+  return medicationListSchema.parse(
+    await request(`/v1/participants/${participantId}/medications${query}`),
+  ).medications;
+}
+
+export async function createMedication(
+  participantId: string,
+  input: CreateMedicationRequest,
+): Promise<Medication> {
+  return z.object({ medication: medicationSchema }).parse(
+    await request(`/v1/participants/${participantId}/medications`, {
+      method: 'POST',
+      body: input,
+    }),
+  ).medication;
+}
+
+export async function updateMedication(
+  id: string,
+  input: UpdateMedicationRequest,
+): Promise<Medication> {
+  return z
+    .object({ medication: medicationSchema })
+    .parse(await request(`/v1/medications/${id}`, { method: 'PATCH', body: input })).medication;
+}
+
+export async function putMedicationSchedules(
+  id: string,
+  input: PutMedicationSchedulesRequest,
+): Promise<Medication> {
+  return z
+    .object({ medication: medicationSchema })
+    .parse(await request(`/v1/medications/${id}/schedules`, { method: 'PUT', body: input }))
+    .medication;
+}
+
+export async function listDoses(
+  participantId: string,
+  range: { from?: string; to?: string } = {},
+): Promise<{ doses: MedicationDose[]; timeZone: string }> {
+  const params = new URLSearchParams();
+  if (range.from) params.set('from', range.from);
+  if (range.to) params.set('to', range.to);
+  const query = params.toString();
+
+  return doseListSchema.parse(
+    await request(
+      `/v1/participants/${participantId}/medication-doses${query === '' ? '' : `?${query}`}`,
+    ),
+  );
+}
+
+export async function listDueDoses(
+  withinMinutes?: number,
+): Promise<{ doses: MedicationDose[]; timeZone: string }> {
+  const query = withinMinutes === undefined ? '' : `?within=${withinMinutes}`;
+  return doseListSchema.parse(await request(`/v1/me/medication-doses/due${query}`));
+}
+
+export async function listAdministrations(
+  participantId: string,
+  range: { from?: string; to?: string } = {},
+): Promise<MedicationAdministration[]> {
+  const params = new URLSearchParams();
+  if (range.from) params.set('from', range.from);
+  if (range.to) params.set('to', range.to);
+  const query = params.toString();
+
+  return administrationListSchema.parse(
+    await request(
+      `/v1/participants/${participantId}/medication-administrations${query === '' ? '' : `?${query}`}`,
+    ),
+  ).administrations;
+}
+
+export async function signOffDose(
+  doseId: string,
+  input: SignOffRequest,
+): Promise<MedicationAdministration> {
+  return z.object({ administration: medicationAdministrationSchema }).parse(
+    await request(`/v1/medication-doses/${doseId}/administration`, {
+      method: 'PUT',
+      body: input,
+    }),
+  ).administration;
+}
+
+export async function recordPrn(
+  participantId: string,
+  input: RecordPrnRequest,
+): Promise<MedicationAdministration> {
+  return z.object({ administration: medicationAdministrationSchema }).parse(
+    await request(`/v1/participants/${participantId}/medication-administrations`, {
+      method: 'POST',
+      body: input,
+    }),
+  ).administration;
+}
+
+export async function updateAdministration(
+  id: string,
+  input: UpdateAdministrationRequest,
+): Promise<MedicationAdministration> {
+  return z
+    .object({ administration: medicationAdministrationSchema })
+    .parse(await request(`/v1/medication-administrations/${id}`, { method: 'PATCH', body: input }))
+    .administration;
+}
+
+const colleagueSchema = z.object({
+  id: z.string(),
+  displayName: z.string(),
+  role: z.string(),
+});
+
+export type Colleague = z.infer<typeof colleagueSchema>;
+
+/** Active staff a sign-off can name as a witness (doc 01 §7.2). */
+export async function listColleagues(): Promise<Colleague[]> {
+  return z
+    .object({ colleagues: z.array(colleagueSchema) })
+    .parse(await request('/v1/me/colleagues')).colleagues;
 }

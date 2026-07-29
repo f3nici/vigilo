@@ -28,6 +28,14 @@ import {
   diaryEntryRoutes,
   participantDiaryRoutes,
 } from './routes/diary.js';
+import {
+  administrationRoutes,
+  colleagueRoutes,
+  doseRoutes,
+  medicationRoutes,
+  myDoseRoutes,
+  participantMedicationRoutes,
+} from './routes/medications.js';
 import { syncRoutes, deviceRoutes } from './routes/sync.js';
 import { exportRoutes, reportRoutes } from './routes/reports.js';
 import { notificationPreferenceRoutes, pushRoutes } from './routes/push.js';
@@ -115,6 +123,15 @@ export function createApp(config: Config, logger: Logger, db: Database, keyRing:
   app.use('/api/v1/diary-categories', diaryCategoryRoutes(db));
   app.use('/api/v1/attachments', attachmentRoutes(db, keyRing, store));
   app.use('/api/v1/me', myWindowRoutes(db, keyRing));
+
+  // Medications hang off a participant too, in their own file for the same
+  // reason as the checks and the diary (doc 04 §10).
+  app.use('/api/v1/participants', participantMedicationRoutes(db, keyRing));
+  app.use('/api/v1/medications', medicationRoutes(db, keyRing));
+  app.use('/api/v1/medication-doses', doseRoutes(db, keyRing));
+  app.use('/api/v1/medication-administrations', administrationRoutes(db, keyRing));
+  app.use('/api/v1/me', myDoseRoutes(db, keyRing));
+  app.use('/api/v1/me', colleagueRoutes(db));
 
   // Sync and push. Everything they touch already exists; these are the two
   // surfaces that put it on a phone with no signal (doc 04 §13 and §14).

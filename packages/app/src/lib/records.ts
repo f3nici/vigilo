@@ -5,10 +5,15 @@ import {
   templateSchemaSchema,
   type CheckValue,
   type CheckWindow,
+  type Medication,
+  type MedicationAdministration,
+  type MedicationDose,
   type MissedReasonCode,
   type ParticipantSummary,
   type PutEntryRequest,
   type PutMissReasonRequest,
+  type RecordPrnRequest,
+  type SignOffRequest,
   type TemplateSchema,
   type WindowDetail,
 } from '@vigilo/shared';
@@ -227,6 +232,202 @@ export async function recordMissReason(input: {
   });
 
   return { detail: input.window, queued: true };
+}
+
+/* -------------------------------------------------------------- medications */
+
+/**
+ * The doses a worker is walking into.
+ *
+ * Local first, like every other record read here. Signing off a dose is the
+ * other thing that has to work in a house with no signal, and the doses were
+ * materialised on the server days ago precisely so the phone already holds
+ * them.
+ */
+export async function readDueDoses(): Promise<{ doses: MedicationDose[]; source: Source }> {
+  const db = local();
+
+  if (db) {
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    return {
+      doses: await db.dosesBetween<MedicationDose>(
+        new Date(now - 2 * day).toISOString(),
+        new Date(now + day).toISOString(),
+      ),
+      source: 'local',
+    };
+  }
+
+  return { doses: (await api.listDueDoses()).doses, source: 'server' };
+}
+
+/**
+ * The staff a witness can be picked from.
+ *
+ * Refreshed whenever there is a connection and cached sealed on the device, so
+ * a worker signing off a witnessed medication in a house with no signal still
+ * gets a list rather than an empty picker and a dose they cannot record.
+ */
+export async function readColleagues(): Promise<api.Colleague[]> {
+  const db = local();
+  if (!db) return api.listColleagues();
+
+  try {
+    const colleagues = await api.listColleagues();
+    await db.setColleagues(colleagues);
+    return colleagues;
+  } catch {
+    return db.colleagues<api.Colleague>();
+  }
+}
+
+export async function readDose(doseId: string): Promise<MedicationDose | null> {
+  const db = local();
+  if (!db) return null;
+  return db.dose<MedicationDose>(doseId);
+}
+
+export async function readMedications(participantId: string): Promise<Medication[]> {
+  const db = local();
+  return db ? db.medicationsFor<Medication>(participantId) : api.listMedications(participantId);
+}
+
+export async function readAdministrations(
+  participantId: string,
+): Promise<MedicationAdministration[]> {
+  const db = local();
+  return db
+    ? db.administrationsFor<MedicationAdministration>(participantId)
+    : api.listAdministrations(participantId);
+}
+
+/**
+ * Signs off a dose.
+ *
+ * Through the outbox when the device has a local database, straight to the API
+ * otherwise. The rules that decide whether the sign-off is allowed at all, a
+ * note on a refusal and a witness where the medication needs one, are checked
+ * by the caller against the shared function, so a worker with no signal is
+ * told at the moment they tap rather than two hours later.
+ */
+export async function signOffDose(input: {
+  dose: MedicationDose;
+  request: SignOffRequest;
+}): Promise<{ dose: MedicationDose; queued: boolean }> {
+  const db = local();
+
+  if (!db) {
+    await api.signOffDose(input.dose.id, input.request);
+    return { dose: { ...input.dose, status: input.request.status }, queued: false };
+  }
+
+  const updated: MedicationDose = {
+    ...input.dose,
+    status: input.request.status,
+    administrationId: input.request.id,
+  };
+
+  await db.recordSignOffLocally({
+    administration: {
+      id: input.request.id,
+      participantId: input.dose.participantId,
+      medicationId: input.dose.medicationId,
+      doseId: input.dose.id,
+      administeredAt: input.request.administeredAt,
+    },
+    doseStatus: input.request.status,
+    sealedAdministration: {
+      id: input.request.id,
+      doseId: input.dose.id,
+      medicationId: input.dose.medicationId,
+      participantId: input.dose.participantId,
+      medicationName: input.dose.medicationName,
+      dose: input.dose.dose,
+      isPrn: false,
+      status: input.request.status,
+      administeredAt: input.request.administeredAt,
+      recordedAt: input.request.recordedAt,
+      receivedAt: input.request.recordedAt,
+      note: input.request.note,
+      reason: null,
+      outcome: null,
+      // Lateness comes from the server clock, always. Claiming it here would
+      // be the device deciding something it is not allowed to decide.
+      isLate: input.dose.isLate,
+      recordedBy: null,
+      recordedByName: null,
+      witnessedBy: input.request.witnessedBy,
+      witnessedByName: null,
+    },
+    sealedDose: updated,
+  });
+
+  await store().enqueue({
+    opId: uuidv7(),
+    kind: 'medication.sign_off',
+    participantId: input.dose.participantId,
+    doseId: input.dose.id,
+    payload: input.request,
+  });
+
+  return { dose: updated, queued: true };
+}
+
+/** A PRN dose, which answers no scheduled time and so updates no dose row. */
+export async function recordPrn(input: {
+  participantId: string;
+  medication: Medication;
+  request: RecordPrnRequest;
+}): Promise<{ queued: boolean }> {
+  const db = local();
+
+  if (!db) {
+    await api.recordPrn(input.participantId, input.request);
+    return { queued: false };
+  }
+
+  await db.recordSignOffLocally({
+    administration: {
+      id: input.request.id,
+      participantId: input.participantId,
+      medicationId: input.medication.id,
+      doseId: null,
+      administeredAt: input.request.administeredAt,
+    },
+    doseStatus: null,
+    sealedAdministration: {
+      id: input.request.id,
+      doseId: null,
+      medicationId: input.medication.id,
+      participantId: input.participantId,
+      medicationName: input.medication.name,
+      dose: input.medication.dose,
+      isPrn: true,
+      status: input.request.status,
+      administeredAt: input.request.administeredAt,
+      recordedAt: input.request.recordedAt,
+      receivedAt: input.request.recordedAt,
+      note: input.request.note,
+      reason: input.request.reason,
+      outcome: input.request.outcome,
+      isLate: false,
+      recordedBy: null,
+      recordedByName: null,
+      witnessedBy: input.request.witnessedBy,
+      witnessedByName: null,
+    },
+    sealedDose: null,
+  });
+
+  await store().enqueue({
+    opId: uuidv7(),
+    kind: 'medication.prn',
+    participantId: input.participantId,
+    payload: input.request,
+  });
+
+  return { queued: true };
 }
 
 /** The schema a version carries, whichever side it came from. */

@@ -17,7 +17,7 @@
  * Today screen sorts and groups by, so that screen is one query with no joins.
  */
 
-export const LOCAL_SCHEMA_VERSION = 1;
+export const LOCAL_SCHEMA_VERSION = 2;
 
 /**
  * Migrations, applied in order and recorded. A device that has been away for
@@ -217,6 +217,59 @@ export const migrations: readonly { version: number; statements: readonly string
       `CREATE INDEX IF NOT EXISTS attachment_queue_ready ON attachment_queue (state, next_attempt_at)`,
     ],
   },
+
+  /*
+   * Phase 7. Added as a second migration rather than folded into the first,
+   * because a device already holding records must walk to it rather than be
+   * wiped: a wipe takes the outbox with it, and the outbox is the one thing on
+   * the device that exists nowhere else.
+   */
+  {
+    version: 2,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS medications (
+         id             TEXT PRIMARY KEY,
+         participant_id TEXT NOT NULL,
+         name           TEXT NOT NULL,
+         is_prn         INTEGER NOT NULL,
+         active         INTEGER NOT NULL,
+         revision       INTEGER NOT NULL,
+         sealed         TEXT NOT NULL
+       )`,
+      `CREATE INDEX IF NOT EXISTS medications_participant ON medications (participant_id, name)`,
+
+      /*
+       * The dose list the Today screen sorts and groups by, same idea as
+       * `windows`: everything it filters on is a column, so that screen is one
+       * query with no joins and no decryption for the ordering.
+       */
+      `CREATE TABLE IF NOT EXISTS medication_doses (
+         id                TEXT PRIMARY KEY,
+         participant_id    TEXT NOT NULL,
+         medication_id     TEXT NOT NULL,
+         due_at            TEXT NOT NULL,
+         status            TEXT NOT NULL,
+         expected          INTEGER NOT NULL,
+         administration_id TEXT,
+         revision          INTEGER NOT NULL,
+         sealed            TEXT NOT NULL
+       )`,
+      `CREATE INDEX IF NOT EXISTS doses_when ON medication_doses (due_at)`,
+      `CREATE INDEX IF NOT EXISTS doses_participant ON medication_doses (participant_id, due_at)`,
+
+      `CREATE TABLE IF NOT EXISTS medication_administrations (
+         id              TEXT PRIMARY KEY,
+         participant_id  TEXT NOT NULL,
+         medication_id   TEXT NOT NULL,
+         dose_id         TEXT,
+         administered_at TEXT NOT NULL,
+         revision        INTEGER NOT NULL,
+         sealed          TEXT NOT NULL
+       )`,
+      `CREATE INDEX IF NOT EXISTS administrations_when
+         ON medication_administrations (participant_id, administered_at DESC)`,
+    ],
+  },
 ];
 
 /** Every table holding synced or queued data, for a wipe or a scope purge. */
@@ -235,6 +288,9 @@ export const dataTables = [
   'miss_reasons',
   'diary_entries',
   'attachments',
+  'medications',
+  'medication_doses',
+  'medication_administrations',
   'outbox',
   'attachment_queue',
 ] as const;
@@ -259,6 +315,9 @@ export const entityTables: Record<string, string> = {
   window_miss_reason: 'miss_reasons',
   diary_entry: 'diary_entries',
   attachment: 'attachments',
+  medication: 'medications',
+  medication_dose: 'medication_doses',
+  medication_administration: 'medication_administrations',
 };
 
 /** Tables keyed by participant, which a scope revocation clears (doc 05 §4). */
@@ -272,4 +331,7 @@ export const participantScopedTables = [
   'entries',
   'diary_entries',
   'attachments',
+  'medications',
+  'medication_doses',
+  'medication_administrations',
 ] as const;

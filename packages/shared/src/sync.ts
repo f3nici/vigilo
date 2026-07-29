@@ -8,6 +8,13 @@ import {
 } from './checks.js';
 import { checkTemplateSchema, templateVersionSchema } from './templates.js';
 import { checkScheduleSchema } from './schedules.js';
+import {
+  medicationAdministrationSchema,
+  medicationDoseSchema,
+  medicationSchema,
+  recordPrnRequestSchema,
+  signOffRequestSchema,
+} from './medications.js';
 import { checkWindowSchema } from './windows.js';
 import {
   createDiaryEntryRequestSchema,
@@ -58,11 +65,14 @@ export const syncEntities = [
   'check_template',
   'check_template_version',
   'check_schedule',
+  'medication',
   'missed_reason_code',
   'diary_category',
   'check_window',
   'check_entry',
   'window_miss_reason',
+  'medication_dose',
+  'medication_administration',
   'diary_entry',
   'attachment',
 ] as const;
@@ -168,11 +178,14 @@ export const syncChangeSchema = z.discriminatedUnion('entity', [
   change('check_template', checkTemplateSchema),
   change('check_template_version', templateVersionSchema),
   change('check_schedule', checkScheduleSchema),
+  change('medication', medicationSchema),
   change('missed_reason_code', missedReasonCodeSchema),
   change('diary_category', diaryCategorySchema),
   change('check_window', checkWindowSchema),
   change('check_entry', checkEntrySchema),
   change('window_miss_reason', missReasonSchema),
+  change('medication_dose', medicationDoseSchema),
+  change('medication_administration', medicationAdministrationSchema),
   change('diary_entry', diaryEntrySchema),
   change('attachment', attachmentSchema),
 ]);
@@ -272,6 +285,8 @@ export function needsBootstrap(cursor: number, serverRevision: number): boolean 
 export const outboxOperationKinds = [
   'check_entry.put',
   'miss_reason.put',
+  'medication.sign_off',
+  'medication.prn',
   'diary_entry.create',
   'diary_entry.update',
   'attachment.create',
@@ -300,6 +315,29 @@ export const outboxOperationSchema = z.discriminatedUnion('kind', [
     participantId: z.string().uuid(),
     windowId: z.string().uuid(),
     payload: putMissReasonRequestSchema,
+  }),
+  z.object({
+    opId: z.string().uuid(),
+    kind: z.literal('medication.sign_off'),
+    participantId: z.string().uuid(),
+    /**
+     * Never null, unlike a check entry's window.
+     *
+     * A worker who runs out of materialised windows can still record a check
+     * against the clock, and the server binds it by timestamp. A dose cannot
+     * work that way: binding by timestamp would mean guessing which medication
+     * was given, and a guess about which drug reached a person is not a guess
+     * software gets to make. Out of doses, the PRN path or a note is the
+     * honest answer.
+     */
+    doseId: z.string().uuid(),
+    payload: signOffRequestSchema,
+  }),
+  z.object({
+    opId: z.string().uuid(),
+    kind: z.literal('medication.prn'),
+    participantId: z.string().uuid(),
+    payload: recordPrnRequestSchema,
   }),
   z.object({
     opId: z.string().uuid(),
