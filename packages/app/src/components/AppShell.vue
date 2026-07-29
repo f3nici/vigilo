@@ -34,6 +34,9 @@ const nav = computed(() => {
   if (canManageTemplates(session.principal?.role ?? 'worker')) {
     items.push({ name: 'check-templates', label: 'Check forms' });
   }
+  if (['admin', 'team_leader', 'nurse'].includes(session.principal?.role ?? 'worker')) {
+    items.push({ name: 'reports', label: 'Reports' });
+  }
   if (session.principal?.role === 'admin') {
     items.push({ name: 'diary-categories', label: 'Diary' });
     items.push({ name: 'users', label: 'People' });

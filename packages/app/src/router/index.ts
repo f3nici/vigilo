@@ -108,6 +108,14 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, roles: ['admin', 'nurse'], title: 'Field builder' },
       },
       {
+        path: 'reports',
+        name: 'reports',
+        component: () => import('@/views/ReportsView.vue'),
+        // A worker records care; they do not report on it. The API says the
+        // same thing, and this is so they are not shown a screen that 403s.
+        meta: { requiresAuth: true, roles: ['admin', 'team_leader', 'nurse'], title: 'Reports' },
+      },
+      {
         path: 'diary-categories',
         name: 'diary-categories',
         component: () => import('@/views/DiaryCategoriesView.vue'),

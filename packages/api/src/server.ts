@@ -22,12 +22,13 @@ async function main(): Promise<void> {
   }
 
   // Fail here rather than on the first photo somebody tries to attach.
-  await createFileStore(config.ATTACHMENT_DIR).ensureWritable();
+  const store = createFileStore(config.ATTACHMENT_DIR);
+  await store.ensureWritable();
 
   const { db, sql } = createDatabase(config.DATABASE_URL);
 
   const app = createApp(config, logger, db, keyRing);
-  const jobs = startJobs(db, logger, keyRing, vapidKeys(config));
+  const jobs = startJobs(db, logger, keyRing, vapidKeys(config), store);
 
   const server = app.listen(config.PORT, () => {
     logger.info({ port: config.PORT, build: config.BUILD_HASH }, 'vigilo api listening');

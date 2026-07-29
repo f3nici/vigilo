@@ -18,6 +18,7 @@ export * from './intervals.js';
 export * from './participants.js';
 export * from './password.js';
 export * from './push.js';
+export * from './reports.js';
 export * from './roles.js';
 export * from './schedules.js';
 export * from './sync.js';

@@ -109,6 +109,7 @@ export async function resetData(ownerDb: Database): Promise<void> {
       refresh_tokens,
       sessions,
       recovery_codes,
+      export_jobs,
       notifications_sent,
       notification_preferences,
       push_subscriptions,

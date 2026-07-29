@@ -4,19 +4,20 @@ Care records platform for a disability support team. Participant diaries and
 admin-defined observation checks, working offline. Ships as an installable PWA
 first, with native Android and iOS builds as the final phases.
 
-**Status: Phases 0 to 5 done. This is the v1 line.** Monorepo, Docker Compose
-and CI; identity, roles, TOTP, the break-glass CLI, the scope resolver, the
-audit log and the encryption layer; participant records with alerts, emergency
-contacts, emergency plans and assignments; check templates with versions and the
-field builder, per-participant schedules and segments, coverage, the
-materialiser and closer jobs, and entry recording with partial, late and
-edit-with-revision; the diary with categories, occurred-at, per-entry
-visibility, edit revisions and admin soft delete, encrypted attachments with
-EXIF stripping and thumbnails, and the participant timeline; and the installable
-PWA with a local SQLite database over OPFS, WebAuthn or PIN unlock, the
-revision-cursor sync, the idempotent outbox, the attachment queue and Web Push.
-**Phase 6 (reports) is next**, in `docs/09-roadmap.md`. Everything after the v1
-line is additive.
+**Status: Phases 0 to 6 done.** Phase 5 was the v1 line and everything since is
+additive. Monorepo, Docker Compose and CI; identity, roles, TOTP, the
+break-glass CLI, the scope resolver, the audit log and the encryption layer;
+participant records with alerts, emergency contacts, emergency plans and
+assignments; check templates with versions and the field builder,
+per-participant schedules and segments, coverage, the materialiser and closer
+jobs, and entry recording with partial, late and edit-with-revision; the diary
+with categories, occurred-at, per-entry visibility, edit revisions and admin
+soft delete, encrypted attachments with EXIF stripping and thumbnails, and the
+participant timeline; the installable PWA with a local SQLite database over
+OPFS, WebAuthn or PIN unlock, the revision-cursor sync, the idempotent outbox,
+the attachment queue and Web Push; and reports: the daily PDF, trends with
+gaps preserved, the compliance report and audited CSV exports.
+**Phase 7 (medications) is next**, in `docs/09-roadmap.md`.
 
 ## Read before building
 
@@ -149,5 +150,17 @@ service container.
   `node packages/app/scripts/generate-icons.mjs`.
 - Coverage recalculation can rewrite compliance history. It must preview before
   applying, and it is heavily audited.
+- **The compliance counting lives in `packages/shared/reports.ts`**, not in a
+  SQL query. It is the one number somebody will be asked to defend, so the PDF,
+  the screen and the API all derive it from the same function. `not_expected`
+  is never in the denominator (D51 covers the empty case).
+- **A CSV field starting `=`, `+`, `-` or `@` is prefixed with an apostrophe**
+  (D54). A spreadsheet runs those as formulas and this file goes to outsiders.
+- **The trend chart is hand-drawn SVG on purpose** (D52). Every charting
+  library interpolates across missing data, and doc 01 §8.2 requires a gap be
+  drawn as a gap.
+- **A built CSV export is decrypted participant data on the attachment volume.**
+  It is deleted after 24 hours by a job, and every export and download is
+  audited with its filters and row count.
 - Never point a store review build at production data. Use staging with seeded
   fake participants.

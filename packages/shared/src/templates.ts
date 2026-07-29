@@ -373,3 +373,56 @@ export function suggestFieldKey(label: string): string {
     .slice(0, 63);
   return /^[a-z]/.test(key) ? key : `field_${key}`.slice(0, 63);
 }
+
+/**
+ * One recorded value, rendered for a human.
+ *
+ * Used by the daily PDF, the CSV export and anywhere on screen a value is
+ * shown as text rather than in an input. One implementation, because a report
+ * handed to a family that says `cpap` where the screen says `CPAP` is a report
+ * that looks like it came from a different system.
+ *
+ * Choice values are resolved to their labels, because the stored value is a
+ * key the org chose and the label is the words they use. Nothing here colours,
+ * flags or judges a value (CLAUDE.md).
+ */
+export function formatFieldValue(
+  field: TemplateField | undefined,
+  value: {
+    number?: number | null;
+    bool?: boolean | null;
+    text?: string | null;
+    json?: string | string[] | null;
+    unit?: string | null;
+  },
+): string {
+  if (value.number !== null && value.number !== undefined) {
+    const unit = value.unit ?? (field?.type === 'number' ? field.unit : null);
+    const decimals = field?.type === 'number' ? (field.decimals ?? 0) : 0;
+    const shown = decimals > 0 ? value.number.toFixed(decimals) : String(value.number);
+    return unit ? `${shown} ${unit}` : shown;
+  }
+
+  if (value.bool !== null && value.bool !== undefined) return value.bool ? 'Yes' : 'No';
+
+  if (value.json !== null && value.json !== undefined) {
+    const chosen = Array.isArray(value.json) ? value.json : [value.json];
+    return chosen.map((one) => choiceLabel(field, one)).join(', ');
+  }
+
+  if (value.text !== null && value.text !== undefined && value.text !== '') return value.text;
+
+  return '';
+}
+
+/** The org's own words for a stored choice key, or the key if it has gone. */
+function choiceLabel(field: TemplateField | undefined, value: string): string {
+  const choices =
+    field?.type === 'single_choice' || field?.type === 'multi_choice'
+      ? field.options
+      : field?.type === 'checklist'
+        ? field.items
+        : [];
+
+  return choices.find((choice) => choice.value === value)?.label ?? value;
+}
