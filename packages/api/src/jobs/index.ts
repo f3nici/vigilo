@@ -2,12 +2,17 @@ import { schedule, type ScheduledTask } from 'node-cron';
 import type { Database } from '../db/client.js';
 import type { Logger } from '../logger.js';
 import type { KeyRing } from '../crypto/keys.js';
-import { jobRuns } from '../db/schema.js';
+import { eq } from 'drizzle-orm';
+import { exportJobs, jobRuns } from '../db/schema.js';
 import { verifyAuditChain } from '../services/audit.js';
 import { pruneExpiredAuth } from '../services/maintenance.js';
 import { closeWindows, materialiseHorizon } from '../services/windows.js';
 import { runNotifications, pruneNotificationHistory } from '../services/notifications.js';
 import type { VapidKeys } from '../services/push.js';
+import { claimQueuedExports, pruneExports, runExport } from '../services/exports.js';
+import { resolveScopeFor } from '../services/scope.js';
+import { findById } from '../services/auth.js';
+import type { FileStore } from '../services/storage.js';
 
 /**
  * Background jobs (doc 02 §6).
@@ -49,6 +54,7 @@ export function startJobs(
   logger: Logger,
   keyRing: KeyRing,
   vapid: VapidKeys | null,
+  store: FileStore,
 ): { stop: () => void } {
   const tasks: ScheduledTask[] = [];
 
@@ -153,6 +159,57 @@ export function startJobs(
     schedule('45 3 * * *', () => {
       void runJob(db, logger, 'push.prune_history', async () => {
         return { status: 'ok', detail: { removed: await pruneNotificationHistory(db) } };
+      });
+    }),
+  );
+
+  /**
+   * Queued CSV exports (doc 01 §8.4).
+   *
+   * Every minute, a few at a time. An export past the row threshold is minutes
+   * of work, and running them one after another keeps a large one from
+   * starving the API of connections while somebody is trying to record a check.
+   */
+  tasks.push(
+    schedule('* * * * *', () => {
+      void runJob(db, logger, 'exports.build', async () => {
+        const queued = await claimQueuedExports(db);
+        let built = 0;
+
+        for (const row of queued) {
+          const user = await findById(db, row.userId);
+          if (!user || user.status !== 'active') {
+            // The account is gone or suspended. The export goes with it rather
+            // than being built for somebody who can no longer sign in.
+            await db.delete(exportJobs).where(eq(exportJobs.id, row.id));
+            continue;
+          }
+
+          /*
+           * Scope resolved now, not when the export was requested. Somebody
+           * who lost a participant between asking and the job running must not
+           * get a file built with the access they used to have.
+           */
+          const scope = await resolveScopeFor(db, {
+            userId: user.id,
+            role: user.role,
+            participantId: user.participantId,
+          });
+
+          await runExport(db, keyRing, store, row, scope);
+          built += 1;
+        }
+
+        return { status: 'ok', detail: { built } };
+      });
+    }),
+  );
+
+  /** Built exports are decrypted participant data on a volume, so they go. */
+  tasks.push(
+    schedule('15 * * * *', () => {
+      void runJob(db, logger, 'exports.prune', async () => {
+        return { status: 'ok', detail: { removed: await pruneExports(db, store) } };
       });
     }),
   );

@@ -102,6 +102,17 @@ import {
   type SyncChangesResponse,
   type SyncPushResponse,
   type UpdateNotificationPreferences,
+  complianceReportSchema,
+  dailyReportSchema,
+  exportJobSchema,
+  trendSeriesSchema,
+  type ComplianceGrouping,
+  type ComplianceReport,
+  type DailyReport,
+  type ExportJob,
+  type ExportQuery,
+  type TrendBucket,
+  type TrendSeries,
 } from '@vigilo/shared';
 import { z } from 'zod';
 
@@ -921,4 +932,125 @@ export async function uploadAttachmentBytes(
   }
 
   return z.object({ attachment: attachmentSchema }).parse(body).attachment;
+}
+
+/* --------------------------------------------------------------- reports */
+
+/**
+ * Reports (doc 04 §11). The PDF and the CSV are not here: they are downloads,
+ * and a download is a link the browser follows rather than a fetch we buffer
+ * into memory and hand back.
+ */
+export async function getDailyReport(
+  participantId: string,
+  from: string,
+  to: string,
+): Promise<DailyReport> {
+  return z
+    .object({ report: dailyReportSchema })
+    .parse(await request(`/v1/reports/daily?participantId=${participantId}&from=${from}&to=${to}`))
+    .report;
+}
+
+export function dailyReportPdfUrl(participantId: string, from: string, to: string): string {
+  return `/api/v1/reports/daily.pdf?participantId=${participantId}&from=${from}&to=${to}`;
+}
+
+export async function getComplianceReport(query: {
+  from: string;
+  to: string;
+  groupBy: ComplianceGrouping;
+  participantId?: string;
+  userId?: string;
+}): Promise<ComplianceReport> {
+  const params = new URLSearchParams({
+    from: query.from,
+    to: query.to,
+    groupBy: query.groupBy,
+    ...(query.participantId ? { participantId: query.participantId } : {}),
+    ...(query.userId ? { userId: query.userId } : {}),
+  });
+  return z
+    .object({ report: complianceReportSchema })
+    .parse(await request(`/v1/reports/compliance?${params.toString()}`)).report;
+}
+
+export async function getTrend(query: {
+  participantId: string;
+  fieldKey: string;
+  from: string;
+  to: string;
+  bucket: TrendBucket;
+}): Promise<TrendSeries> {
+  const params = new URLSearchParams(query);
+  return z
+    .object({ series: trendSeriesSchema })
+    .parse(await request(`/v1/reports/trends?${params.toString()}`)).series;
+}
+
+const trendFieldSchema = z.object({
+  fieldKey: z.string(),
+  label: z.string(),
+  unit: z.string().nullable(),
+  readings: z.number(),
+});
+
+export type TrendField = z.infer<typeof trendFieldSchema>;
+
+export async function listTrendFields(participantId: string): Promise<TrendField[]> {
+  return z
+    .object({ fields: z.array(trendFieldSchema) })
+    .parse(await request(`/v1/reports/trend-fields?participantId=${participantId}`)).fields;
+}
+
+/* --------------------------------------------------------------- exports */
+
+/**
+ * Asks for an export.
+ *
+ * Two possible answers, which is why this does not go through `request`. A
+ * small export comes back as the file itself; a large one comes back as a job
+ * to poll. The browser is handed a blob in the first case and a job id in the
+ * second.
+ */
+export async function requestExport(
+  query: ExportQuery,
+): Promise<{ kind: 'file'; blob: Blob; filename: string } | { kind: 'job'; job: ExportJob }> {
+  const response = await fetch('/api/v1/exports', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken() },
+    body: JSON.stringify(query),
+  });
+
+  if (response.status === 202) {
+    const body: unknown = await response.json();
+    return { kind: 'job', job: z.object({ job: exportJobSchema }).parse(body).job };
+  }
+
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null);
+    const parsed = apiErrorSchema.safeParse(body);
+    if (parsed.success) {
+      const { code, message, details } = parsed.data.error;
+      throw new ApiRequestError(code, message, details);
+    }
+    throw new ApiRequestError('server_error', 'That export could not be made.');
+  }
+
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? 'vigilo-export.csv';
+  return { kind: 'file', blob: await response.blob(), filename };
+}
+
+export async function listExportJobs(): Promise<ExportJob[]> {
+  return z.object({ jobs: z.array(exportJobSchema) }).parse(await request('/v1/exports')).jobs;
+}
+
+export async function getExportJob(id: string): Promise<ExportJob> {
+  return z.object({ job: exportJobSchema }).parse(await request(`/v1/exports/${id}`)).job;
+}
+
+export function exportDownloadUrl(id: string): string {
+  return `/api/v1/exports/${id}/download`;
 }

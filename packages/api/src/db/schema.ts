@@ -1119,6 +1119,52 @@ export const notificationsSent = pgTable(
 );
 
 /**
+ * A CSV export that was too big to hand back on the request (doc 01 §8.4).
+ *
+ * Below the row threshold an export streams straight to the browser. Above it,
+ * a request that streams for two minutes is a request a proxy will cut, and a
+ * download that dies at 80 percent looks like a smaller export than it was. So
+ * it becomes a row here, a file on the attachment volume, and something the
+ * browser polls.
+ *
+ * The file is encrypted at rest like every other file, and holds decrypted
+ * participant data, so it is deleted on a short clock rather than kept.
+ */
+export const exportJobs = pgTable(
+  'export_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    fromDate: date('from_date').notNull(),
+    toDate: date('to_date').notNull(),
+    participantId: uuid('participant_id').references(() => participants.id, {
+      onDelete: 'cascade',
+    }),
+    status: text('status').notNull().default('queued'),
+    rowCount: integer('row_count'),
+    byteSize: integer('byte_size'),
+    /** Relative path on the attachment volume, same store as an attachment. */
+    storagePath: text('storage_path'),
+    /** Its own data key, wrapped by the master key. */
+    dataKeyEnc: encrypted('data_key_enc'),
+    error: text('error'),
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    /** After this it is deleted, file and row. */
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    index('export_jobs_user_idx').on(table.userId, table.requestedAt),
+    index('export_jobs_expiry_idx').on(table.expiresAt),
+  ],
+);
+
+export type ExportJobRow = typeof exportJobs.$inferSelect;
+
+/**
  * Append-only and hash-chained (doc 03 §10, doc 07 §4).
  *
  * The application database role has INSERT and SELECT only: no UPDATE, no

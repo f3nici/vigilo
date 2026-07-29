@@ -43,7 +43,7 @@ import { HttpError } from '../middleware/errors.js';
  * rather than as plain columns.
  */
 
-const BODY_COLUMN = 'diary_entries.body_enc';
+export const BODY_COLUMN = 'diary_entries.body_enc';
 const REVISION_COLUMN = 'diary_entry_revisions.values_enc';
 
 export type DiaryPrincipal = {
