@@ -15,6 +15,7 @@ export * from './diary.js';
 export * from './errors.js';
 export * from './health.js';
 export * from './intervals.js';
+export * from './medications.js';
 export * from './participants.js';
 export * from './password.js';
 export * from './push.js';

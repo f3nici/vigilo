@@ -295,6 +295,155 @@ describe('the local database', () => {
 
   /* ---------------------------------------------------------------- outbox */
 
+  /* -------------------------------------------------------- medications */
+
+  describe('medications', () => {
+    const MEDICATION = '01930000-0000-7000-8000-00000000c001';
+    const DOSE = '01930000-0000-7000-8000-00000000c002';
+
+    function doseChange(revision: number, status = 'pending'): SyncChange {
+      return {
+        entity: 'medication_dose',
+        id: DOSE,
+        participantId: PARTICIPANT,
+        revision,
+        row: {
+          id: DOSE,
+          medicationId: MEDICATION,
+          participantId: PARTICIPANT,
+          medicationName: 'Keppra',
+          dose: '250 mg',
+          form: 'tablet',
+          route: 'oral',
+          instructions: null,
+          requiresWitness: false,
+          dueAt: '2026-07-28T22:00:00.000Z',
+          expected: true,
+          coverageReason: null,
+          status: status as 'pending',
+          isLate: false,
+          administrationId: null,
+        },
+      };
+    }
+
+    function medicationChange(revision: number): SyncChange {
+      return {
+        entity: 'medication',
+        id: MEDICATION,
+        participantId: PARTICIPANT,
+        revision,
+        row: {
+          id: MEDICATION,
+          participantId: PARTICIPANT,
+          name: 'Keppra',
+          form: 'tablet',
+          dose: '250 mg',
+          route: 'oral',
+          instructions: 'With food',
+          isPrn: false,
+          startDate: '2026-07-01',
+          endDate: null,
+          requiresWitness: false,
+          active: true,
+          schedules: [],
+          createdBy: null,
+          createdByName: null,
+          createdAt: '2026-07-01T00:00:00.000Z',
+          updatedAt: '2026-07-01T00:00:00.000Z',
+        },
+      };
+    }
+
+    beforeEach(async () => {
+      await store.applyPage({
+        changes: [participantChange(PARTICIPANT, 10), medicationChange(11), doseChange(12)],
+        tombstones: [],
+        scopeChanges: [],
+        nextRevision: 12,
+        at: '2026-07-28T00:00:00.000Z',
+      });
+    });
+
+    it('stores a dose and hands it back in due order', async () => {
+      const doses = await store.dosesBetween<{ id: string; medicationName: string }>(
+        '2026-07-28T00:00:00.000Z',
+        '2026-07-29T00:00:00.000Z',
+      );
+      expect(doses.map((one) => one.id)).toEqual([DOSE]);
+      expect(doses[0]?.medicationName).toBe('Keppra');
+    });
+
+    it('keeps the instructions inside the sealed blob', async () => {
+      // The plain columns are ids, times and states. Everything a row says
+      // about a person is sealed, on the device as on the server.
+      const rows = await db.all<{ sealed: string }>('SELECT sealed FROM medications');
+      expect(rows[0]?.sealed).not.toContain('With food');
+
+      const medications = await store.medicationsFor<{ instructions: string }>(PARTICIPANT);
+      expect(medications[0]?.instructions).toBe('With food');
+    });
+
+    it('writes the sign-off and moves the dose in one go', async () => {
+      await store.recordSignOffLocally({
+        administration: {
+          id: '01930000-0000-7000-8000-00000000c003',
+          participantId: PARTICIPANT,
+          medicationId: MEDICATION,
+          doseId: DOSE,
+          administeredAt: '2026-07-28T22:05:00.000Z',
+        },
+        doseStatus: 'given',
+        sealedAdministration: { id: '01930000-0000-7000-8000-00000000c003', status: 'given' },
+        sealedDose: { id: DOSE, status: 'given' },
+      });
+
+      const dose = await store.dose<{ status: string }>(DOSE);
+      expect(dose?.status).toBe('given');
+
+      const administrations = await store.administrationsFor<{ status: string }>(PARTICIPANT);
+      expect(administrations).toHaveLength(1);
+    });
+
+    it('writes a PRN sign-off with no dose to move', async () => {
+      await store.recordSignOffLocally({
+        administration: {
+          id: '01930000-0000-7000-8000-00000000c004',
+          participantId: PARTICIPANT,
+          medicationId: MEDICATION,
+          doseId: null,
+          administeredAt: '2026-07-28T23:00:00.000Z',
+        },
+        doseStatus: null,
+        sealedAdministration: { id: '01930000-0000-7000-8000-00000000c004', isPrn: true },
+        sealedDose: null,
+      });
+
+      expect(await store.administrationsFor(PARTICIPANT)).toHaveLength(1);
+      expect((await store.dose<{ status: string }>(DOSE))?.status).toBe('pending');
+    });
+
+    it('takes the medication tables with a revocation', async () => {
+      await store.applyPage({
+        changes: [],
+        tombstones: [],
+        scopeChanges: [
+          {
+            participantId: PARTICIPANT,
+            effect: 'revoked',
+            at: '2026-07-29T00:00:00.000Z',
+            revision: 20,
+          },
+        ],
+        nextRevision: 20,
+        at: '2026-07-29T00:00:00.000Z',
+      });
+
+      expect(await store.medicationsFor(PARTICIPANT)).toHaveLength(0);
+      expect(await store.dose(DOSE)).toBeNull();
+    });
+  });
+
   describe('the outbox', () => {
     const OP = '01930000-0000-7000-8000-00000000e001';
 

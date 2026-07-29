@@ -157,7 +157,7 @@ the compliance numbers match hand-counted windows in a seeded fixture.
 
 ---
 
-## Phase 7: Medications
+## Phase 7: Medications (done)
 
 - Medications, schedules, materialised doses using the same coverage rules.
 - Administration sign-off: given, refused, withheld, not required,

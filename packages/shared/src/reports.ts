@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { countsTowardCompliance, windowStatusSchema, type WindowStatus } from './windows.js';
+import { doseCountsSchema, doseStatusSchema } from './medications.js';
 
 /**
  * Reporting (doc 01 §8, doc 04 §11).
@@ -322,11 +323,44 @@ export const dailyDiaryEntrySchema = z.object({
 
 export type DailyDiaryEntry = z.infer<typeof dailyDiaryEntrySchema>;
 
+/**
+ * A medication line on the day (doc 01 §8.1).
+ *
+ * One shape for both a scheduled dose and a PRN one, because the report is a
+ * timeline of what happened rather than two lists a reader has to reconcile. A
+ * scheduled dose nobody answered appears with no `administeredAt`, which is
+ * exactly the line an auditor is looking for.
+ */
+export const dailyDoseSchema = z.object({
+  id: z.string(),
+  medicationName: z.string(),
+  dose: z.string(),
+  isPrn: z.boolean(),
+  /** The scheduled time. Null for a PRN dose, which answered no time. */
+  dueAt: z.string().nullable(),
+  /** When it was given. Null when nothing was signed off. */
+  administeredAt: z.string().nullable(),
+  status: doseStatusSchema,
+  statusLabel: z.string(),
+  expected: z.boolean(),
+  coverageReason: z.string().nullable(),
+  isLate: z.boolean(),
+  recordedByName: z.string().nullable(),
+  witnessedByName: z.string().nullable(),
+  note: z.string().nullable(),
+  reason: z.string().nullable(),
+  outcome: z.string().nullable(),
+});
+
+export type DailyDose = z.infer<typeof dailyDoseSchema>;
+
 export const dailyDaySchema = z.object({
   date: z.string(),
   windows: z.array(dailyWindowSchema),
   diary: z.array(dailyDiaryEntrySchema),
+  medications: z.array(dailyDoseSchema),
   counts: complianceCountsSchema,
+  doseCounts: doseCountsSchema,
 });
 
 export type DailyDay = z.infer<typeof dailyDaySchema>;
@@ -347,6 +381,7 @@ export const dailyReportSchema = z.object({
   generatedByName: z.string(),
   days: z.array(dailyDaySchema),
   total: complianceCountsSchema,
+  doseTotal: doseCountsSchema,
 });
 
 export type DailyReport = z.infer<typeof dailyReportSchema>;
@@ -385,7 +420,7 @@ export function rangeTooLong(from: string, to: string, maxDays = REPORT_MAX_DAYS
 
 /* --------------------------------------------------------------- exports */
 
-export const exportKinds = ['checks', 'diary'] as const;
+export const exportKinds = ['checks', 'diary', 'medications'] as const;
 export const exportKindSchema = z.enum(exportKinds);
 export type ExportKind = z.infer<typeof exportKindSchema>;
 

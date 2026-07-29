@@ -84,6 +84,14 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, roles: ['admin', 'team_leader'], title: 'Check schedule' },
       },
       {
+        path: 'participants/:id/medications',
+        name: 'participant-medications',
+        component: () => import('@/views/MedicationsView.vue'),
+        // Deciding what somebody takes is a clinical judgement, so this sits
+        // with the nurse and the admin, where care plan authorship sits.
+        meta: { requiresAuth: true, roles: ['admin', 'nurse'], title: 'Medication chart' },
+      },
+      {
         path: 'participants/:id/coverage',
         name: 'participant-coverage',
         component: () => import('@/views/CoverageView.vue'),

@@ -7,6 +7,7 @@ import { exportJobs, jobRuns } from '../db/schema.js';
 import { verifyAuditChain } from '../services/audit.js';
 import { pruneExpiredAuth } from '../services/maintenance.js';
 import { closeWindows, materialiseHorizon } from '../services/windows.js';
+import { closeDoses, materialiseDoseHorizon } from '../services/doses.js';
 import { runNotifications, pruneNotificationHistory } from '../services/notifications.js';
 import type { VapidKeys } from '../services/push.js';
 import { claimQueuedExports, pruneExports, runExport } from '../services/exports.js';
@@ -133,6 +134,32 @@ export function startJobs(
       void runJob(db, logger, 'checks.close_windows', async () => {
         const result = await closeWindows(db);
         return { status: 'ok', detail: { ...result } };
+      });
+    }),
+  );
+
+  /**
+   * The dose materialiser (doc 01 §7.2). Same hourly beat and the same
+   * seven-day horizon as the check grid, for the same reason: a phone that
+   * loses signal on Monday still has to know what is due on Thursday.
+   */
+  tasks.push(
+    schedule('10 * * * *', () => {
+      void runJob(db, logger, 'medications.materialise_doses', async () => {
+        return { status: 'ok', detail: { ...(await materialiseDoseHorizon(db)) } };
+      });
+    }),
+  );
+
+  /**
+   * The dose closer. A dose past its grace period with nobody signing it off
+   * is a missed dose, which is what puts it at the top of the next worker's
+   * Today screen.
+   */
+  tasks.push(
+    schedule('*/5 * * * *', () => {
+      void runJob(db, logger, 'medications.close_doses', async () => {
+        return { status: 'ok', detail: { ...(await closeDoses(db)) } };
       });
     }),
   );

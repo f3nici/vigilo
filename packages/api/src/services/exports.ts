@@ -1,4 +1,5 @@
 import { and, asc, eq, gte, inArray, lt, lte, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import {
   addDays,
   csvRow,
@@ -20,6 +21,9 @@ import {
   diaryCategories,
   diaryEntries,
   exportJobs,
+  medicationAdministrations,
+  medicationDoses,
+  medications,
   participants,
   users,
   type ExportJobRow,
@@ -30,6 +34,7 @@ import { getOrgSettings } from './org.js';
 import { COLUMN } from './participants.js';
 import { BODY_COLUMN } from './diary.js';
 import { VALUE_TEXT_COLUMN } from './windows.js';
+import { NOTE_COLUMN, OUTCOME_COLUMN, REASON_COLUMN } from './doses.js';
 import { parseSchema } from './templates.js';
 import { recordAudit, type AuditActor } from './audit.js';
 import type { FileStore } from './storage.js';
@@ -94,6 +99,19 @@ export async function countRows(
     return Number(row?.count ?? 0);
   }
 
+  if (query.kind === 'medications') {
+    const filters = [
+      gte(medicationAdministrations.administeredAt, from),
+      lt(medicationAdministrations.administeredAt, to),
+    ];
+    if (ids !== 'all') filters.push(inArray(medicationAdministrations.participantId, ids));
+    const [row] = await db
+      .select({ count: sql<string>`count(*)::text` })
+      .from(medicationAdministrations)
+      .where(and(...filters));
+    return Number(row?.count ?? 0);
+  }
+
   const filters = [gte(diaryEntries.occurredAt, from), lt(diaryEntries.occurredAt, to)];
   if (ids !== 'all') filters.push(inArray(diaryEntries.participantId, ids));
   const [row] = await db
@@ -116,9 +134,104 @@ export async function buildCsv(
   principal: ExportPrincipal,
   query: ExportQuery,
 ): Promise<{ csv: string; rowCount: number }> {
-  return query.kind === 'checks'
-    ? checksCsv(db, keyRing, principal, query)
-    : diaryCsv(db, keyRing, principal, query);
+  if (query.kind === 'checks') return checksCsv(db, keyRing, principal, query);
+  if (query.kind === 'medications') return medicationsCsv(db, keyRing, principal, query);
+  return diaryCsv(db, keyRing, principal, query);
+}
+
+/**
+ * One row per sign-off, scheduled and PRN together (doc 04 §11).
+ *
+ * A sign-off is the record, so this exports administrations rather than doses.
+ * A dose nobody answered has no row here on purpose: "what was given" and
+ * "what was missed" are different questions, and the second one is what the
+ * compliance report and the daily report are for.
+ */
+async function medicationsCsv(
+  db: Database,
+  keyRing: KeyRing,
+  principal: ExportPrincipal,
+  query: ExportQuery,
+): Promise<{ csv: string; rowCount: number }> {
+  const org = await getOrgSettings(db);
+  const ids = scopeIds(principal.scope, query.participantId);
+  if (ids !== 'all' && ids.length === 0) return { csv: '', rowCount: 0 };
+
+  const from = zonedTimeToUtc(query.from, 0, org.timezone);
+  const to = zonedTimeToUtc(addDays(query.to, 1), 0, org.timezone);
+
+  const filters = [
+    gte(medicationAdministrations.administeredAt, from),
+    lt(medicationAdministrations.administeredAt, to),
+  ];
+  if (ids !== 'all') filters.push(inArray(medicationAdministrations.participantId, ids));
+
+  const witnesses = alias(users, 'witness');
+
+  const rows = await db
+    .select({
+      administration: medicationAdministrations,
+      medication: medications,
+      dueAt: medicationDoses.dueAt,
+      recordedByName: users.displayName,
+      witnessedByName: witnesses.displayName,
+      firstNameEnc: participants.firstNameEnc,
+      lastNameEnc: participants.lastNameEnc,
+    })
+    .from(medicationAdministrations)
+    .innerJoin(medications, eq(medications.id, medicationAdministrations.medicationId))
+    .innerJoin(participants, eq(participants.id, medicationAdministrations.participantId))
+    .leftJoin(medicationDoses, eq(medicationDoses.id, medicationAdministrations.doseId))
+    .leftJoin(users, eq(users.id, medicationAdministrations.recordedBy))
+    .leftJoin(witnesses, eq(witnesses.id, medicationAdministrations.witnessedBy))
+    .where(and(...filters))
+    .orderBy(asc(medicationAdministrations.administeredAt));
+
+  let csv = csvRow([
+    'administration_id',
+    'participant',
+    'medication',
+    'form',
+    'dose',
+    'route',
+    'is_prn',
+    'due_at',
+    'administered_at',
+    'recorded_at',
+    'received_at',
+    'status',
+    'is_late',
+    'recorded_by',
+    'witnessed_by',
+    'reason',
+    'outcome',
+    'note',
+  ]);
+
+  for (const row of rows) {
+    csv += csvRow([
+      row.administration.id,
+      `${decryptField(keyRing, COLUMN.firstName, row.firstNameEnc)} ${decryptField(keyRing, COLUMN.lastName, row.lastNameEnc)}`,
+      row.medication.name,
+      row.medication.form,
+      row.medication.dose,
+      row.medication.route,
+      row.medication.isPrn,
+      row.dueAt?.toISOString() ?? null,
+      row.administration.administeredAt.toISOString(),
+      row.administration.recordedAt.toISOString(),
+      row.administration.receivedAt.toISOString(),
+      row.administration.status,
+      row.administration.isLate,
+      row.recordedByName,
+      row.witnessedByName,
+      decryptOptional(keyRing, REASON_COLUMN, row.administration.reasonEnc),
+      decryptOptional(keyRing, OUTCOME_COLUMN, row.administration.outcomeEnc),
+      decryptOptional(keyRing, NOTE_COLUMN, row.administration.noteEnc),
+    ]);
+  }
+
+  return { csv, rowCount: rows.length };
 }
 
 /**

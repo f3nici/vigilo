@@ -3,6 +3,8 @@ import {
   addDays,
   countCompliance,
   completionPercent,
+  countDoses,
+  describeDoseStatus,
   emptyCounts,
   findGaps,
   formatFieldValue,
@@ -22,6 +24,7 @@ import {
   type TrendBucket,
   type TrendPoint,
   type TrendSeries,
+  type DailyDose,
 } from '@vigilo/shared';
 import type { Database } from '../db/client.js';
 import type { KeyRing } from '../crypto/keys.js';
@@ -43,6 +46,7 @@ import { findParticipant, toSummary } from './participants.js';
 import { toAlert } from './alerts.js';
 import { listDiaryEntries } from './diary.js';
 import { listWindows, MISS_NOTE_COLUMN, VALUE_TEXT_COLUMN } from './windows.js';
+import { administrationsFor, listDoses } from './doses.js';
 import { parseSchema } from './templates.js';
 import type { DiaryPrincipal } from './diary.js';
 
@@ -386,6 +390,11 @@ export async function trendableFields(
 
 /* ----------------------------------------------------------- daily report */
 
+/** Zeroes, so a day with no medications still has every column. */
+function emptyDoseCounts() {
+  return countDoses([]);
+}
+
 /**
  * A participant's day, or a run of days.
  *
@@ -444,6 +453,19 @@ export async function dailyReport(
     windows.map((window) => window.id),
   );
 
+  const medications = await dailyDoses(
+    db,
+    keyRing,
+    query.participantId,
+    query.from,
+    query.to,
+    org.timezone,
+  );
+  const dosesOn = (date: string) =>
+    medications.filter(
+      (one) => localDateOf(new Date(one.dueAt ?? one.administeredAt!), org.timezone) === date,
+    );
+
   const days: DailyDay[] = [];
   for (let date = query.from; date <= query.to; date = addDays(date, 1)) {
     const dayWindows = windows.filter(
@@ -487,7 +509,9 @@ export async function dailyReport(
           editCount: entry.editCount,
           attachmentCount: entry.attachments.length,
         })),
+      medications: dosesOn(date),
       counts: emptyCounts(),
+      doseCounts: emptyDoseCounts(),
     });
   }
 
@@ -499,6 +523,10 @@ export async function dailyReport(
         hasMissReason: window.missReason !== null,
       })),
     );
+    // PRN doses answered no schedule, so they are shown but never counted:
+    // folding them in would put a number in the denominator that nothing was
+    // ever due for.
+    day.doseCounts = countDoses(day.medications.filter((one) => !one.isPrn));
   }
 
   return {
@@ -527,7 +555,86 @@ export async function dailyReport(
         hasMissReason: window.missReason !== null,
       })),
     ),
+    doseTotal: countDoses(medications.filter((one) => !one.isPrn)),
   };
+}
+
+/**
+ * The day's medication lines (doc 01 §8.1).
+ *
+ * Scheduled doses and PRN ones in one list, because the report is a timeline of
+ * what happened rather than two lists a reader has to reconcile. A dose nobody
+ * answered is included with no time against it, which is exactly the line an
+ * auditor is looking for.
+ */
+async function dailyDoses(
+  db: Database,
+  keyRing: KeyRing,
+  participantId: string,
+  from: string,
+  to: string,
+  timeZone: string,
+): Promise<DailyDose[]> {
+  const start = zonedTimeToUtc(from, 0, timeZone);
+  const end = zonedTimeToUtc(addDays(to, 1), 0, timeZone);
+
+  const [doses, administrations] = await Promise.all([
+    listDoses(db, keyRing, participantId, start, end),
+    administrationsFor(db, keyRing, participantId, start, end),
+  ]);
+
+  const byDose = new Map(
+    administrations.filter((one) => one.doseId !== null).map((one) => [one.doseId!, one] as const),
+  );
+
+  const scheduled: DailyDose[] = doses.map((dose) => {
+    const signOff = byDose.get(dose.id) ?? null;
+    return {
+      id: dose.id,
+      medicationName: dose.medicationName,
+      dose: dose.dose,
+      isPrn: false,
+      dueAt: dose.dueAt,
+      administeredAt: signOff?.administeredAt ?? null,
+      status: dose.status,
+      statusLabel: describeDoseStatus(dose.status),
+      expected: dose.expected,
+      coverageReason: dose.coverageReason,
+      isLate: dose.isLate,
+      recordedByName: signOff?.recordedByName ?? null,
+      witnessedByName: signOff?.witnessedByName ?? null,
+      note: signOff?.note ?? null,
+      reason: null,
+      outcome: null,
+    };
+  });
+
+  const prn: DailyDose[] = administrations
+    .filter((one) => one.doseId === null)
+    .map((one) => ({
+      id: one.id,
+      medicationName: one.medicationName,
+      dose: one.dose,
+      isPrn: true,
+      dueAt: null,
+      administeredAt: one.administeredAt,
+      status: one.status,
+      statusLabel: describeDoseStatus(one.status),
+      // A PRN dose was never expected by a schedule, and was never unexpected
+      // either. It is out of the counting entirely.
+      expected: false,
+      coverageReason: null,
+      isLate: false,
+      recordedByName: one.recordedByName,
+      witnessedByName: one.witnessedByName,
+      note: one.note,
+      reason: one.reason,
+      outcome: one.outcome,
+    }));
+
+  return [...scheduled, ...prn].sort(
+    (a, b) => Date.parse(a.dueAt ?? a.administeredAt!) - Date.parse(b.dueAt ?? b.administeredAt!),
+  );
 }
 
 type EntryDetail = {

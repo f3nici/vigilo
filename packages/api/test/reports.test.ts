@@ -729,6 +729,170 @@ describe('reports', () => {
 
   /* -------------------------------------------------------------- exports */
 
+  /* ----------------------------------------------------------- medications */
+
+  describe('medications in the report', () => {
+    /** A scheduled dose signed off, plus a PRN one. */
+    async function withMedications(fixture: Fixture) {
+      const scheduled = await api(
+        fixture.admin,
+        'post',
+        `/api/v1/participants/${fixture.participantId}/medications`,
+      ).send({ name: 'Keppra', form: 'tablet', dose: '250 mg', route: 'oral', startDate: today() });
+
+      await api(
+        fixture.admin,
+        'put',
+        `/api/v1/medications/${scheduled.body.medication.id}/schedules`,
+      ).send({ schedules: [{ timeOfDay: '08:00' }, { timeOfDay: '20:00' }] });
+
+      const prn = await api(
+        fixture.admin,
+        'post',
+        `/api/v1/participants/${fixture.participantId}/medications`,
+      ).send({ name: 'Panadol', dose: '500 mg', isPrn: true, startDate: today() });
+
+      const doses = await api(
+        fixture.admin,
+        'get',
+        `/api/v1/participants/${fixture.participantId}/medication-doses`,
+      );
+
+      /*
+       * Both records are pinned to one instant a few minutes ago, and the
+       * report is asked for that instant's local date. Anchoring on "today"
+       * instead would make these tests depend on the hour the suite runs: a
+       * dose is only laid for a time still ahead, so before breakfast there
+       * are three of them today and after dinner there are none.
+       */
+      const at = new Date(Date.now() - 5 * 60_000);
+      const iso = at.toISOString();
+
+      await h.ownerDb.execute(sql`
+        update medication_doses set due_at = ${iso}::timestamptz
+        where id = ${doses.body.doses[0].id}::uuid
+      `);
+
+      await api(
+        fixture.admin,
+        'put',
+        `/api/v1/medication-doses/${doses.body.doses[0].id}/administration`,
+      ).send({ id: randomUUID(), status: 'given', administeredAt: iso, recordedAt: iso });
+
+      await api(
+        fixture.admin,
+        'post',
+        `/api/v1/participants/${fixture.participantId}/medication-administrations`,
+      ).send({
+        id: randomUUID(),
+        medicationId: prn.body.medication.id,
+        status: 'given',
+        administeredAt: iso,
+        recordedAt: iso,
+        reason: 'Reported a headache',
+      });
+
+      return localDateOf(at, MELBOURNE);
+    }
+
+    it('puts scheduled doses and PRN ones on the day, in one timeline', async () => {
+      const fixture = await setUp();
+      const date = await withMedications(fixture);
+
+      const response = await api(
+        fixture.admin,
+        'get',
+        `/api/v1/reports/daily?participantId=${fixture.participantId}&date=${date}`,
+      );
+
+      expect(response.status).toBe(200);
+      const day = response.body.report.days[0];
+
+      const given = day.medications.find(
+        (one: { isPrn: boolean; status: string }) => !one.isPrn && one.status === 'given',
+      );
+      expect(given.medicationName).toBe('Keppra');
+      expect(given.statusLabel).toBe('Given');
+
+      const prn = day.medications.find((one: { isPrn: boolean }) => one.isPrn);
+      expect(prn.reason).toBe('Reported a headache');
+      expect(prn.dueAt).toBeNull();
+    });
+
+    it('leaves PRN doses out of the counting', async () => {
+      // A PRN dose answered no schedule, so putting it in the denominator
+      // would put a number there that nothing was ever due for.
+      const fixture = await setUp();
+      const date = await withMedications(fixture);
+
+      const response = await api(
+        fixture.admin,
+        'get',
+        `/api/v1/reports/daily?participantId=${fixture.participantId}&date=${date}`,
+      );
+
+      const day = response.body.report.days[0];
+      const counts = response.body.report.doseTotal;
+
+      const scheduled = day.medications.filter((one: { isPrn: boolean }) => !one.isPrn);
+      const prn = day.medications.filter((one: { isPrn: boolean }) => one.isPrn);
+
+      // Stated against the day's own contents rather than a fixed number: how
+      // many scheduled doses land on today depends on the hour the suite runs.
+      expect(prn).toHaveLength(1);
+      expect(counts.expected + counts.notExpected).toBe(scheduled.length);
+      expect(counts.given).toBe(1);
+      expect(
+        counts.given +
+          counts.refused +
+          counts.withheld +
+          counts.selfAdministered +
+          counts.notRequired +
+          counts.pending +
+          counts.missed,
+      ).toBe(counts.expected);
+    });
+
+    it('renders the medication section into the PDF', async () => {
+      const fixture = await setUp();
+      const date = await withMedications(fixture);
+
+      const response = await api(
+        fixture.admin,
+        'get',
+        `/api/v1/reports/daily.pdf?participantId=${fixture.participantId}&from=${date}&to=${date}`,
+      ).buffer(true);
+
+      expect(response.status).toBe(200);
+      expect(response.headers['content-type']).toContain('application/pdf');
+      expect(response.body.length).toBeGreaterThan(1000);
+    });
+
+    it('exports one row per sign-off, scheduled and PRN together', async () => {
+      const fixture = await setUp();
+      const date = await withMedications(fixture);
+
+      const response = await api(fixture.admin, 'post', '/api/v1/exports').send({
+        kind: 'medications',
+        from: date,
+        to: date,
+      });
+
+      expect(response.status).toBe(200);
+
+      const lines = response.text
+        .replace(/^\uFEFF/, '')
+        .trim()
+        .split('\r\n');
+
+      expect(lines[0]).toContain('medication');
+      expect(lines[0]).toContain('witnessed_by');
+      expect(lines).toHaveLength(3);
+      expect(response.text).toContain('Keppra');
+      expect(response.text).toContain('Reported a headache');
+    });
+  });
+
   describe('CSV export', () => {
     it('writes one row per entry with a column per field', async () => {
       const fixture = await setUp();
