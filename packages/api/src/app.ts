@@ -28,7 +28,10 @@ import {
   diaryEntryRoutes,
   participantDiaryRoutes,
 } from './routes/diary.js';
+import { syncRoutes, deviceRoutes } from './routes/sync.js';
+import { notificationPreferenceRoutes, pushRoutes } from './routes/push.js';
 import { createFileStore } from './services/storage.js';
+import { vapidKeys } from './services/vapid.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
 import { auditActorMiddleware, csrfProtection, loadPrincipal } from './middleware/principal.js';
 
@@ -111,6 +114,13 @@ export function createApp(config: Config, logger: Logger, db: Database, keyRing:
   app.use('/api/v1/diary-categories', diaryCategoryRoutes(db));
   app.use('/api/v1/attachments', attachmentRoutes(db, keyRing, store));
   app.use('/api/v1/me', myWindowRoutes(db, keyRing));
+
+  // Sync and push. Everything they touch already exists; these are the two
+  // surfaces that put it on a phone with no signal (doc 04 §13 and §14).
+  app.use('/api/v1/sync', syncRoutes(db, keyRing));
+  app.use('/api/v1/devices', deviceRoutes(db));
+  app.use('/api/v1/push', pushRoutes(db, vapidKeys(config)));
+  app.use('/api/v1/me', notificationPreferenceRoutes(db));
 
   app.use(notFoundHandler);
   app.use(errorHandler);

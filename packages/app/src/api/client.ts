@@ -88,6 +88,20 @@ import {
   type UpdateContactRequest,
   type UpdateParticipantRequest,
   type UserSummary,
+  deviceSchema,
+  notificationPreferencesSchema,
+  syncBootstrapResponseSchema,
+  syncChangesResponseSchema,
+  syncPushResponseSchema,
+  type Device,
+  type NotificationPreferences,
+  type OutboxOperation,
+  type PushSubscriptionRequest,
+  type RegisterDeviceRequest,
+  type SyncBootstrapResponse,
+  type SyncChangesResponse,
+  type SyncPushResponse,
+  type UpdateNotificationPreferences,
 } from '@vigilo/shared';
 import { z } from 'zod';
 
@@ -124,6 +138,19 @@ type RequestOptions = {
   body?: unknown;
 };
 
+/**
+ * This device's id, sent on every request.
+ *
+ * Not a credential: the server records it on audit rows and uses it to move
+ * this device's own sync cursor, and every query that touches a device row
+ * also matches on the user.
+ */
+let deviceId: string | null = null;
+
+export function setDeviceId(id: string): void {
+  deviceId = id;
+}
+
 async function request(path: string, options: RequestOptions = {}): Promise<unknown> {
   const method = options.method ?? 'GET';
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -131,6 +158,8 @@ async function request(path: string, options: RequestOptions = {}): Promise<unkn
   if (method !== 'GET' && method !== 'HEAD') {
     headers['X-CSRF-Token'] = csrfToken();
   }
+
+  if (deviceId !== null) headers['X-Device-Id'] = deviceId;
 
   const response = await fetch(`/api${path}`, {
     method,
@@ -787,4 +816,109 @@ export function attachmentUrl(id: string): string {
 
 export function thumbnailUrl(id: string): string {
   return `/api/v1/attachments/${id}/thumb`;
+}
+
+/* ------------------------------------------------------------------ sync */
+
+/**
+ * The three sync endpoints (doc 04 §13) and the device registration they hang
+ * off. Responses are parsed against the shared schemas like everything else,
+ * so a server sending a shape this build does not understand fails here rather
+ * than halfway through a local transaction.
+ */
+export async function registerDevice(request_: RegisterDeviceRequest): Promise<Device> {
+  return z
+    .object({ device: deviceSchema })
+    .parse(await request('/v1/devices', { method: 'POST', body: request_ })).device;
+}
+
+export async function getDevice(id: string): Promise<Device> {
+  return z.object({ device: deviceSchema }).parse(await request(`/v1/devices/${id}`)).device;
+}
+
+export async function syncBootstrap(): Promise<SyncBootstrapResponse> {
+  return syncBootstrapResponseSchema.parse(await request('/v1/sync/bootstrap'));
+}
+
+export async function syncChanges(since: number, limit = 500): Promise<SyncChangesResponse> {
+  return syncChangesResponseSchema.parse(
+    await request(`/v1/sync/changes?since=${since}&limit=${limit}`),
+  );
+}
+
+export async function syncPush(operations: OutboxOperation[]): Promise<SyncPushResponse> {
+  return syncPushResponseSchema.parse(
+    await request('/v1/sync/push', {
+      method: 'POST',
+      body: { operations, sentAt: new Date().toISOString() },
+    }),
+  );
+}
+
+/* ------------------------------------------------------------------ push */
+
+export async function getVapidKey(): Promise<{ configured: boolean; publicKey: string | null }> {
+  return z
+    .object({ configured: z.boolean(), publicKey: z.string().nullable() })
+    .parse(await request('/v1/push/vapid-key'));
+}
+
+export async function savePushSubscription(body: PushSubscriptionRequest): Promise<string> {
+  return z
+    .object({ id: z.string() })
+    .parse(await request('/v1/push/subscriptions', { method: 'POST', body })).id;
+}
+
+export async function deletePushSubscription(id: string): Promise<void> {
+  await request(`/v1/push/subscriptions/${id}`, { method: 'DELETE' });
+}
+
+export async function getNotificationPreferences(): Promise<NotificationPreferences> {
+  return z
+    .object({ preferences: notificationPreferencesSchema })
+    .parse(await request('/v1/me/notification-preferences')).preferences;
+}
+
+export async function updateNotificationPreferences(
+  body: UpdateNotificationPreferences,
+): Promise<NotificationPreferences> {
+  return z
+    .object({ preferences: notificationPreferencesSchema })
+    .parse(await request('/v1/me/notification-preferences', { method: 'PUT', body })).preferences;
+}
+
+/**
+ * Attachment bytes for the upload queue.
+ *
+ * Separate from `uploadAttachment` because the queue holds raw bytes it read
+ * back out of the local database rather than a File the user just picked.
+ */
+export async function uploadAttachmentBytes(
+  id: string,
+  bytes: Uint8Array,
+  mimeType: string,
+): Promise<Attachment> {
+  const response = await fetch(`/api/v1/attachments/${id}/content`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: {
+      'Content-Type': mimeType,
+      'X-CSRF-Token': csrfToken(),
+      ...(deviceId === null ? {} : { 'X-Device-Id': deviceId }),
+    },
+    body: new Blob([bytes as BlobPart]),
+  });
+
+  const body: unknown = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const parsed = apiErrorSchema.safeParse(body);
+    if (parsed.success) {
+      const { code, message, details } = parsed.data.error;
+      throw new ApiRequestError(code, message, details);
+    }
+    throw new ApiRequestError('server_error', 'That file could not be uploaded.');
+  }
+
+  return z.object({ attachment: attachmentSchema }).parse(body).attachment;
 }

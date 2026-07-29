@@ -994,6 +994,131 @@ export const syncScopeChanges = pgTable(
 );
 
 /**
+ * Tombstones (doc 03 §11).
+ *
+ * A device cannot learn about a row that is no longer there: an absent row and
+ * an unchanged row look identical through a revision cursor. Almost nothing in
+ * Vigilo is hard-deleted, so this table is small. It exists for the one case
+ * that is, a future window removed when an admin changes the schedule under
+ * it, and for the archived participant whose data a device must drop.
+ */
+export const syncDeletions = pgTable(
+  'sync_deletions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** A value from `syncEntities` in @vigilo/shared. */
+    entityType: text('entity_type').notNull(),
+    entityId: uuid('entity_id').notNull(),
+    /** Null only for org-wide reference data. */
+    participantId: uuid('participant_id'),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('sync_deletions_revision_idx').on(table.revision),
+    index('sync_deletions_participant_idx').on(table.participantId),
+  ],
+);
+
+/**
+ * The idempotency ledger (doc 05 §5).
+ *
+ * Every operation a device pushes carries a UUID v7 it generated. The first
+ * time one arrives it is applied and recorded here; every replay after that
+ * returns `duplicate` and touches nothing. This one table is what makes
+ * retrying safe on a connection that drops halfway through a response, and it
+ * is the single most important property in the sync design.
+ */
+export const syncAppliedOps = pgTable(
+  'sync_applied_ops',
+  {
+    /** Device-generated. The primary key is the idempotency guarantee. */
+    opId: uuid('op_id').primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    deviceId: uuid('device_id').references(() => devices.id, { onDelete: 'set null' }),
+    /** A value from `outboxOperationKinds` in @vigilo/shared. */
+    kind: text('kind').notNull(),
+    /** The row the operation created or changed, for the replay response. */
+    entityId: uuid('entity_id'),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+    appliedAt: timestamp('applied_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('sync_applied_ops_applied_idx').on(table.appliedAt)],
+);
+
+/**
+ * Web Push endpoints (doc 04 §14). FCM and APNs tokens land in the same table
+ * in the native phases, which is why the columns describe a subscription
+ * rather than a browser.
+ */
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    deviceId: uuid('device_id')
+      .notNull()
+      .references(() => devices.id, { onDelete: 'cascade' }),
+    /** Unique: one subscription per endpoint, re-registered rather than duplicated. */
+    endpoint: text('endpoint').notNull().unique(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    expirationTime: bigint('expiration_time', { mode: 'number' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSentAt: timestamp('last_sent_at', { withTimezone: true }),
+    /** Set on a 410 from the push service, which means the endpoint is dead. */
+    failedAt: timestamp('failed_at', { withTimezone: true }),
+    failureCount: integer('failure_count').notNull().default(0),
+  },
+  (table) => [
+    index('push_subscriptions_user_idx').on(table.userId),
+    index('push_subscriptions_device_idx').on(table.deviceId),
+  ],
+);
+
+/**
+ * Per-kind notification toggles (doc 04 §14). Deliberately not a column on
+ * `users`: preferences change often and a user row bumping its revision on
+ * every toggle would push a pointless change to every device that can see them.
+ */
+export const notificationPreferences = pgTable('notification_preferences', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  preferences: jsonb('preferences').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * What a notification has already been sent for.
+ *
+ * Without this the overdue job would notify about the same window every time
+ * it runs. A worker who gets the same alert every five minutes turns
+ * notifications off, and then gets none of the ones that matter.
+ */
+export const notificationsSent = pgTable(
+  'notifications_sent',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    /** The window or participant the notification was about. */
+    subjectId: uuid('subject_id').notNull(),
+    sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('notifications_sent_unique').on(table.userId, table.kind, table.subjectId),
+    index('notifications_sent_at_idx').on(table.sentAt),
+  ],
+);
+
+/**
  * Append-only and hash-chained (doc 03 §10, doc 07 §4).
  *
  * The application database role has INSERT and SELECT only: no UPDATE, no

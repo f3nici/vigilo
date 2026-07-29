@@ -4,6 +4,22 @@ import { z } from 'zod';
  * Environment is parsed once at startup and fails loudly. A misconfigured
  * container should refuse to start, not serve half a product.
  */
+
+/**
+ * A variable that may be absent or blank.
+ *
+ * `docker compose` passes `${VAR:-}` as an empty string, not as nothing, and a
+ * plain `.optional()` accepts only `undefined`. Without this, leaving an
+ * optional setting blank the way `.env.example` documents stops the API
+ * starting at all, which the container smoke test caught.
+ */
+function optional(schema: z.ZodString) {
+  return z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    schema.optional(),
+  );
+}
+
 const envSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -20,7 +36,7 @@ const envSchema = z
      * Owner connection, used only to run migrations and provision the app
      * role. Falls back to DATABASE_URL for local runs where they are the same.
      */
-    MIGRATE_DATABASE_URL: z.string().min(1).optional(),
+    MIGRATE_DATABASE_URL: optional(z.string().min(1)),
 
     /**
      * When both are set, the migration step gives the app role LOGIN and this
@@ -28,7 +44,7 @@ const envSchema = z
      * rewrite the audit log.
      */
     APP_DB_ROLE: z.string().min(1).default('vigilo_app'),
-    APP_DB_PASSWORD: z.string().min(1).optional(),
+    APP_DB_PASSWORD: optional(z.string().min(1)),
 
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
@@ -81,6 +97,28 @@ const envSchema = z
      * a snapshot of the disk without the master key yields nothing.
      */
     ATTACHMENT_DIR: z.string().min(1).default('/data/attachments'),
+
+    /**
+     * VAPID keys for Web Push (doc 04 §14).
+     *
+     * Optional on purpose. Without them the API still runs and the app still
+     * works; it just never asks for notification permission and the push job
+     * does nothing. A self-hosted deployment that has not generated keys yet
+     * should not be a deployment that will not start.
+     *
+     * `npm run -w @vigilo/api admin -- push:generate-keys` prints a pair.
+     */
+    VAPID_PUBLIC_KEY: optional(z.string().min(1)),
+    VAPID_PRIVATE_KEY: optional(z.string().min(1)),
+    /**
+     * The `mailto:` or `https:` the push service contacts about a misbehaving
+     * sender. Required by the VAPID spec. Vigilo sends no email itself, and
+     * this is not an exception to that: it is a contact address in a header.
+     */
+    VAPID_SUBJECT: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+      z.string().min(1).default('mailto:admin@example.com'),
+    ),
 
     /** Run pending migrations on boot. Off in tests, which manage their own. */
     MIGRATE_ON_START: z

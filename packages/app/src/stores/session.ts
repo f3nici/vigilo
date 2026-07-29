@@ -56,6 +56,7 @@ export const useSessionStore = defineStore('session', () => {
       principal.value = null;
       scope.value = null;
       org.value = null;
+      forget();
       loaded.value = true;
       return;
     }
@@ -65,16 +66,70 @@ export const useSessionStore = defineStore('session', () => {
       principal.value = me.principal;
       scope.value = me.scope;
       org.value = me.org;
+      remember(me);
     } catch (error) {
       if (error instanceof ApiRequestError && error.code === 'unauthenticated') {
         principal.value = null;
         scope.value = null;
         org.value = null;
-      } else {
+        forget();
+      } else if (error instanceof ApiRequestError) {
         throw error;
+      } else {
+        /*
+         * No signal.
+         *
+         * The session is still valid; we simply cannot ask about it right now.
+         * Throwing here leaves the router guard unresolved and the app renders
+         * nothing, which is a blank screen for a worker standing in a house
+         * with no reception, holding a phone that has every record they need
+         * already on it. So the last known principal stands until the server
+         * says otherwise (doc 06 §7: offline is normal, not an error).
+         */
+        const cached = recall();
+        if (cached && principal.value === null) {
+          principal.value = cached.principal;
+          scope.value = cached.scope;
+          org.value = cached.org;
+        }
       }
     } finally {
       loaded.value = true;
+    }
+  }
+
+  /**
+   * The last known principal, so a cold start with no signal knows who is
+   * holding the phone.
+   *
+   * A display name, a role and the org's name and timezone. No participant
+   * data: that lives in the local database, encrypted, behind the unlock. This
+   * much is on screen anyway to whoever has the device in their hand.
+   */
+  const CACHE_KEY = 'vigilo.session';
+
+  function remember(me: MeResponse): void {
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(me));
+    } catch {
+      // Private mode. The app still works, it just cannot start offline.
+    }
+  }
+
+  function recall(): MeResponse | null {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      return raw === null ? null : (JSON.parse(raw) as MeResponse);
+    } catch {
+      return null;
+    }
+  }
+
+  function forget(): void {
+    try {
+      localStorage.removeItem(CACHE_KEY);
+    } catch {
+      // Nothing to do, and nothing that should stop a sign-out.
     }
   }
 
@@ -91,6 +146,7 @@ export const useSessionStore = defineStore('session', () => {
       principal.value = null;
       scope.value = null;
       org.value = null;
+      forget();
     }
   }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import {
   needsMissReason,
   participantShortName,
@@ -9,8 +9,9 @@ import {
 } from '@vigilo/shared';
 import WindowRow from '@/components/WindowRow.vue';
 import FormError from '@/components/FormError.vue';
-import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
+import { readToday } from '@/lib/records';
+import { useOfflineStore } from '@/stores/offline';
 
 /**
  * Today (doc 06 §3).
@@ -22,6 +23,8 @@ import { ApiRequestError } from '@/api/client';
  * Not-expected windows are shown greyed rather than hidden, so the record
  * visibly accounts for the gap instead of quietly omitting it.
  */
+const offline = useOfflineStore();
+
 const windows = ref<CheckWindow[]>([]);
 const participants = ref<ParticipantSummary[]>([]);
 const timeZone = ref('Australia/Melbourne');
@@ -72,14 +75,21 @@ const done = computed(() =>
   ),
 );
 
+/**
+ * Read from the device where there is one, and from the server otherwise.
+ *
+ * "Everything on this screen renders from the local database" (doc 06 §3) is
+ * the requirement, and it is what makes the screen open instantly in a house
+ * with no signal rather than sitting on a spinner that will never resolve.
+ */
 async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
-    const [due, list] = await Promise.all([api.listDueWindows(), api.listParticipants()]);
-    windows.value = due.windows;
-    timeZone.value = due.timeZone;
-    participants.value = list;
+    const today = await readToday();
+    windows.value = today.windows;
+    timeZone.value = today.timeZone;
+    participants.value = today.participants;
   } catch (err) {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not load today.';
   } finally {
@@ -88,6 +98,13 @@ async function load(): Promise<void> {
 }
 
 onMounted(load);
+
+// A finished sync means new windows and new statuses, so the screen follows it
+// rather than waiting for somebody to pull down.
+watch(
+  () => offline.lastSyncAt,
+  () => void load(),
+);
 
 const today = computed(() =>
   new Intl.DateTimeFormat('en-AU', {

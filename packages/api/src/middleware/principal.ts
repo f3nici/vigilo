@@ -43,13 +43,31 @@ export function accessTo(principal: PrincipalContext, participantId: string): Pa
   return principal.access.get(participantId) ?? { kind: 'all', expiresAt: null };
 }
 
+export const DEVICE_HEADER = 'x-device-id';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The device the request came from, if it named one.
+ *
+ * This is a claim, not a credential. It is recorded on audit rows and used to
+ * move that device's own sync cursor, and every query that touches a device
+ * row also matches on the user, so naming somebody else's device achieves
+ * nothing beyond writing a wrong id into your own audit trail.
+ */
+function claimedDeviceId(req: Request): string | null {
+  const header = req.headers[DEVICE_HEADER];
+  if (typeof header !== 'string' || !UUID.test(header)) return null;
+  return header.toLowerCase();
+}
+
 /** Populated on every request, authenticated or not, for audit purposes. */
 export function auditActorMiddleware(): RequestHandler {
   return (req, _res, next) => {
     req.auditActor = {
       userId: null,
       ip: req.ip ?? null,
-      deviceId: null,
+      deviceId: claimedDeviceId(req),
     };
     next();
   };
@@ -113,7 +131,11 @@ export function loadPrincipal(db: Database): RequestHandler {
         });
 
         req.principal = { user, role: user.role, scope, access, sessionId: session.id, authModel };
-        req.auditActor = { userId: user.id, ip: req.ip ?? null, deviceId: null };
+        req.auditActor = {
+          userId: user.id,
+          ip: req.ip ?? null,
+          deviceId: claimedDeviceId(req),
+        };
 
         next();
       } catch (error) {

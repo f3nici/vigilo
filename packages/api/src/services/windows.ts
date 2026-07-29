@@ -9,6 +9,7 @@ import {
   requiredFieldKeys,
   resolveCoverage,
   backfillNeedsApproval,
+  type CheckEntry,
   type CheckValueView,
   type CheckWindow,
   type MissReason,
@@ -28,6 +29,7 @@ import {
   participants,
   users,
   windowMissReasons,
+  type CheckEntryRow,
   type CheckEntryValueRow,
   type CheckWindowRow,
 } from '../db/schema.js';
@@ -37,6 +39,7 @@ import { toSegmentInput, activeSchedulesOn } from './schedules.js';
 import { loadCoverage } from './coverage.js';
 import { publishedVersionFor, parseSchema } from './templates.js';
 import { getOrgSettings } from './org.js';
+import { recordDeletions } from './tombstones.js';
 import { HttpError } from '../middleware/errors.js';
 
 /**
@@ -65,6 +68,49 @@ export function toCheckValue(keyRing: KeyRing, row: CheckEntryValueRow): CheckVa
     unit: row.unit,
     recordedAt: row.recordedAt.toISOString(),
     recordedBy: row.recordedBy,
+  };
+}
+
+/**
+ * A recorded entry with its values, as every caller wants it.
+ *
+ * It lives here rather than in entries.ts because entries.ts already imports
+ * this module and the reverse would be a cycle. Three places were building
+ * this shape by hand, and a fourth arrived with sync.
+ */
+export async function toCheckEntry(
+  db: Database,
+  keyRing: KeyRing,
+  row: CheckEntryRow,
+): Promise<CheckEntry> {
+  const values = await db
+    .select()
+    .from(checkEntryValues)
+    .where(eq(checkEntryValues.entryId, row.id))
+    .orderBy(asc(checkEntryValues.fieldKey));
+
+  const [recorder] = row.recordedBy
+    ? await db
+        .select({ displayName: users.displayName })
+        .from(users)
+        .where(eq(users.id, row.recordedBy))
+        .limit(1)
+    : [];
+
+  return {
+    id: row.id,
+    windowId: row.windowId,
+    participantId: row.participantId,
+    templateVersionId: row.templateVersionId,
+    recordedBy: row.recordedBy,
+    recordedByName: recorder?.displayName ?? null,
+    recordedAt: row.recordedAt.toISOString(),
+    receivedAt: row.receivedAt.toISOString(),
+    status: row.status,
+    isLate: row.isLate,
+    editedAt: row.editedAt?.toISOString() ?? null,
+    editCount: row.editCount,
+    values: values.map((value) => toCheckValue(keyRing, value)),
   };
 }
 
@@ -204,7 +250,13 @@ export async function regenerateFutureWindows(
         sql`not exists (select 1 from check_entries where check_entries.window_id = ${checkWindows.id})`,
       ),
     )
-    .returning({ id: checkWindows.id });
+    .returning({ id: checkWindows.id, participantId: checkWindows.participantId });
+
+  // This is the one place in Vigilo that hard-deletes a row a device holds.
+  // Without a tombstone the phone keeps showing a window that no longer exists
+  // and lets a worker record against it, and the push then fails with a
+  // not_found they cannot act on.
+  await recordDeletions(db, 'check_window', removed);
 
   // Everything left that has not closed yet: the future windows holding an
   // entry, and the one in progress right now. A new grid slot must not be laid
@@ -592,6 +644,26 @@ export async function listWindows(
   return toCheckWindows(db, keyRing, bundles);
 }
 
+/** Windows by id, for a sync page. Same DTO the Today screen renders. */
+export async function windowsByIds(
+  db: Database,
+  keyRing: KeyRing,
+  ids: readonly string[],
+): Promise<CheckWindow[]> {
+  if (ids.length === 0) return [];
+  const bundles = await loadWindowRows(db, inArray(checkWindows.id, [...ids]));
+  return toCheckWindows(db, keyRing, bundles);
+}
+
+/** Miss reasons by window id, for a sync page. */
+export async function missReasonsByWindowIds(
+  db: Database,
+  keyRing: KeyRing,
+  windowIds: readonly string[],
+): Promise<MissReason[]> {
+  return [...(await missReasonsFor(db, keyRing, [...windowIds])).values()];
+}
+
 export async function findWindow(db: Database, id: string): Promise<CheckWindowRow> {
   const [row] = await db.select().from(checkWindows).where(eq(checkWindows.id, id)).limit(1);
   if (!row) throw new HttpError('not_found', 'That check window does not exist.');
@@ -624,36 +696,7 @@ export async function getWindowDetail(
       .from(checkEntries)
       .where(eq(checkEntries.id, bundle.entryId))
       .limit(1);
-    const values = await db
-      .select()
-      .from(checkEntryValues)
-      .where(eq(checkEntryValues.entryId, bundle.entryId))
-      .orderBy(asc(checkEntryValues.fieldKey));
-    const [recorder] = row?.recordedBy
-      ? await db
-          .select({ displayName: users.displayName })
-          .from(users)
-          .where(eq(users.id, row.recordedBy))
-          .limit(1)
-      : [];
-
-    entry = row
-      ? {
-          id: row.id,
-          windowId: row.windowId,
-          participantId: row.participantId,
-          templateVersionId: row.templateVersionId,
-          recordedBy: row.recordedBy,
-          recordedByName: recorder?.displayName ?? null,
-          recordedAt: row.recordedAt.toISOString(),
-          receivedAt: row.receivedAt.toISOString(),
-          status: row.status,
-          isLate: row.isLate,
-          editedAt: row.editedAt?.toISOString() ?? null,
-          editCount: row.editCount,
-          values: values.map((value) => toCheckValue(keyRing, value)),
-        }
-      : null;
+    entry = row ? await toCheckEntry(db, keyRing, row) : null;
   }
 
   const org = await getOrgSettings(db);

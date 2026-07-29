@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import {
   describeWindowStatus,
@@ -19,6 +19,9 @@ import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 import { closesIn, formatDateTime, formatWindowRange } from '@/lib/format';
+import { readReasonCodes, readWindow, recordEntry, recordMissReason } from '@/lib/records';
+import { uuidv7 } from '@/lib/uuid';
+import { entryInProgress } from '@/sw/register';
 
 /**
  * Recording a check (doc 06 §4.3).
@@ -52,8 +55,17 @@ const reasonNote = ref('');
 const revisions = ref<EntryRevision[]>([]);
 const showHistory = ref(false);
 
-/** A device-generated UUID v7 would come from the outbox in Phase 5. */
-const entryId = ref<string>(crypto.randomUUID());
+/**
+ * Device-generated, and a UUID v7 rather than a v4 (CLAUDE.md).
+ *
+ * This id is what makes the save idempotent: the same entry replayed after a
+ * dropped connection updates one row on the server instead of creating a
+ * second check nobody made.
+ */
+const entryId = ref<string>(uuidv7());
+
+/** Set while there is unsaved input, so a service worker update waits. */
+const queued = ref(false);
 
 const schema = computed<TemplateSchema>(() => {
   const parsed = templateSchemaSchema.safeParse(detail.value?.templateSchema);
@@ -85,10 +97,11 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
-    const [window, codes] = await Promise.all([
-      api.getWindow(windowId.value),
-      api.listReasonCodes(),
-    ]);
+    const [window, codes] = await Promise.all([readWindow(windowId.value), readReasonCodes()]);
+    if (!window) {
+      error.value = 'That check window is not on this device.';
+      return;
+    }
     detail.value = window;
     reasonCodes.value = codes;
 
@@ -117,7 +130,14 @@ onMounted(load);
 
 function onChange(value: CheckValue): void {
   values.value = { ...values.value, [value.fieldKey]: value };
+  // Half-typed observations are exactly what a service worker update must not
+  // interrupt (doc 06 §7).
+  entryInProgress.value = true;
 }
+
+onUnmounted(() => {
+  entryInProgress.value = false;
+});
 
 /**
  * Filling the rest of a part-recorded check is still the same entry, not an
@@ -143,17 +163,25 @@ async function save(): Promise<void> {
       ...(value.json === undefined ? {} : { json: value.json }),
     }));
 
-    detail.value = isEdit.value
-      ? await api.editEntry(entryId.value, { values: payload })
-      : await api.putEntry(windowId.value, {
-          entryId: entryId.value,
-          templateVersionId: detail.value.templateVersionId,
-          recordedAt: new Date().toISOString(),
-          values: payload,
-        });
+    if (isEdit.value) {
+      // An edit to a completed check goes to the server, because it writes a
+      // revision row against a record the server already holds. Offline, that
+      // is a genuine limit rather than something to queue and hope about.
+      detail.value = await api.editEntry(entryId.value, { values: payload });
+      queued.value = false;
+    } else {
+      const result = await recordEntry({
+        window: detail.value,
+        entryId: entryId.value,
+        values: payload,
+      });
+      detail.value = result.detail;
+      queued.value = result.queued;
+    }
 
+    entryInProgress.value = false;
     savedAt.value = new Date().toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
-    if (showHistory.value) await loadHistory();
+    if (showHistory.value && !queued.value) await loadHistory();
   } catch (err) {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not save the check.';
   } finally {
@@ -166,10 +194,16 @@ async function saveReason(): Promise<void> {
   saving.value = true;
   error.value = '';
   try {
-    detail.value = await api.putMissReason(windowId.value, {
-      reasonCodeId: chosenReason.value,
-      note: reasonNote.value.trim() === '' ? null : reasonNote.value,
+    if (detail.value === null) return;
+    const result = await recordMissReason({
+      window: detail.value,
+      request: {
+        reasonCodeId: chosenReason.value,
+        note: reasonNote.value.trim() === '' ? null : reasonNote.value,
+      },
     });
+    detail.value = result.detail;
+    queued.value = result.queued;
   } catch (err) {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not record the reason.';
   } finally {
@@ -302,7 +336,13 @@ function describeRevisionValue(value: unknown): string {
 
       <div class="card flex flex-wrap items-center gap-3 p-4">
         <p class="text-text-secondary text-sm">
-          <span v-if="savedAt">Saved {{ savedAt }}.</span>
+          <!--
+            Doc 06 §4.3 shows exactly this: "Saved locally 09:14 · will sync".
+            A worker needs to know the record is on the phone and safe, not be
+            left wondering whether it went anywhere.
+          -->
+          <span v-if="savedAt && queued">Saved on this device {{ savedAt }}, will sync. </span>
+          <span v-else-if="savedAt">Saved {{ savedAt }}. </span>
           <span v-if="remaining.length > 0">
             {{ remaining.length }} required {{ remaining.length === 1 ? 'field' : 'fields' }} still
             to fill. You can save what you have and come back.

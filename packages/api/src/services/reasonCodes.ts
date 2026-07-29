@@ -18,7 +18,7 @@ import { HttpError } from '../middleware/errors.js';
  * the reason it was given.
  */
 
-function toCode(row: MissedReasonCodeRow): MissedReasonCode {
+export function toCode(row: MissedReasonCodeRow): MissedReasonCode {
   return {
     id: row.id,
     code: row.code,

@@ -142,6 +142,23 @@ export default tseslint.config(
     },
   },
 
+  {
+    // Build-time scripts run in Node and report what they produced, which is
+    // the whole point of running one by hand.
+    files: ['packages/*/scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly',
+      },
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
+
   // Last, so Prettier owns formatting and ESLint owns correctness.
   prettier,
 );

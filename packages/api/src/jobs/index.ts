@@ -1,10 +1,13 @@
 import { schedule, type ScheduledTask } from 'node-cron';
 import type { Database } from '../db/client.js';
 import type { Logger } from '../logger.js';
+import type { KeyRing } from '../crypto/keys.js';
 import { jobRuns } from '../db/schema.js';
 import { verifyAuditChain } from '../services/audit.js';
 import { pruneExpiredAuth } from '../services/maintenance.js';
 import { closeWindows, materialiseHorizon } from '../services/windows.js';
+import { runNotifications, pruneNotificationHistory } from '../services/notifications.js';
+import type { VapidKeys } from '../services/push.js';
 
 /**
  * Background jobs (doc 02 §6).
@@ -41,7 +44,12 @@ async function runJob(
   });
 }
 
-export function startJobs(db: Database, logger: Logger): { stop: () => void } {
+export function startJobs(
+  db: Database,
+  logger: Logger,
+  keyRing: KeyRing,
+  vapid: VapidKeys | null,
+): { stop: () => void } {
   const tasks: ScheduledTask[] = [];
 
   /**
@@ -122,6 +130,36 @@ export function startJobs(db: Database, logger: Logger): { stop: () => void } {
       });
     }),
   );
+
+  /**
+   * Notifications (doc 09 Phase 5). Same five minutes as the closer, and
+   * immediately after it in the hour, so a window that has just been marked
+   * missed is notified about in the same tick rather than five minutes later.
+   *
+   * Every send is deduplicated by (user, kind, window), so running this often
+   * does not mean notifying often. It means noticing quickly.
+   */
+  tasks.push(
+    schedule('*/5 * * * *', () => {
+      void runJob(db, logger, 'push.notify', async () => {
+        const result = await runNotifications(db, keyRing, vapid);
+        return { status: 'ok', detail: { ...result } };
+      });
+    }),
+  );
+
+  /** Clears the dedupe table so it does not grow without bound. */
+  tasks.push(
+    schedule('45 3 * * *', () => {
+      void runJob(db, logger, 'push.prune_history', async () => {
+        return { status: 'ok', detail: { removed: await pruneNotificationHistory(db) } };
+      });
+    }),
+  );
+
+  if (vapid === null) {
+    logger.info('no VAPID keys configured, so push notifications are off');
+  }
 
   logger.info({ jobs: tasks.length }, 'background jobs scheduled');
 

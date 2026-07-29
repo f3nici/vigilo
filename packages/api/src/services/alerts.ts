@@ -18,7 +18,7 @@ import { HttpError } from '../middleware/errors.js';
 
 const TEXT_COLUMN = 'participant_alerts.text_enc';
 
-function toAlert(keyRing: KeyRing, row: ParticipantAlertRow): ParticipantAlert {
+export function toAlert(keyRing: KeyRing, row: ParticipantAlertRow): ParticipantAlert {
   return {
     id: row.id,
     participantId: row.participantId,

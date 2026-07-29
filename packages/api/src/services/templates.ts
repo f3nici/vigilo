@@ -54,7 +54,10 @@ function parseSchema(row: CheckTemplateVersionRow): TemplateSchema {
   return parsed.data;
 }
 
-function toVersion(row: CheckTemplateVersionRow, publishedByName: string | null): TemplateVersion {
+export function toVersion(
+  row: CheckTemplateVersionRow,
+  publishedByName: string | null,
+): TemplateVersion {
   return {
     id: row.id,
     templateId: row.templateId,
