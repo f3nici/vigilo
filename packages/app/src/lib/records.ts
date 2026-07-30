@@ -4,11 +4,17 @@ import {
   nextWindowStatus,
   templateSchemaSchema,
   type CheckValue,
+  type CarePlan,
   type CheckWindow,
+  type MarkCarePlanReadRequest,
   type Medication,
   type MedicationAdministration,
   type MedicationDose,
+  type EmergencyContact,
+  type EmergencyPlan,
   type MissedReasonCode,
+  type ParticipantAlert,
+  type ParticipantDetail,
   type ParticipantSummary,
   type PutEntryRequest,
   type PutMissReasonRequest,
@@ -18,6 +24,7 @@ import {
   type WindowDetail,
 } from '@vigilo/shared';
 import * as api from '@/api/client';
+import { ApiRequestError } from '@/api/client';
 import { useOfflineStore } from '@/stores/offline';
 import { useSessionStore } from '@/stores/session';
 import { uuidv7 } from '@/lib/uuid';
@@ -232,6 +239,110 @@ export async function recordMissReason(input: {
   });
 
   return { detail: input.window, queued: true };
+}
+
+/* ------------------------------------------------------------ participants */
+
+export async function readParticipants(): Promise<ParticipantSummary[]> {
+  const db = local();
+  return db ? db.participants<ParticipantSummary>() : api.listParticipants();
+}
+
+/**
+ * One participant, with everything the screen can show.
+ *
+ * Local first, because the emergency panel is the one thing doc 01 §7.4 says
+ * must never need a network, and because a care plan a worker cannot reach is
+ * not a care plan they can read (doc 01 §11). The device holds the summary, the
+ * alerts, the contacts and the emergency plan, so all of that renders offline.
+ *
+ * What it does not hold is the administrative detail: date of birth, NDIS
+ * number, address. Those are never synced, so `partial` says so and the screen
+ * says so rather than showing convincing blanks.
+ */
+export async function readParticipant(
+  id: string,
+): Promise<{ participant: ParticipantDetail; partial: boolean }> {
+  const db = local();
+  if (!db) return { participant: await api.getParticipant(id), partial: false };
+
+  try {
+    return { participant: await api.getParticipant(id), partial: false };
+  } catch (error) {
+    if (error instanceof ApiRequestError) throw error;
+
+    const summary = await db.participant<ParticipantSummary>(id);
+    if (summary === null) throw error;
+
+    return {
+      participant: {
+        ...summary,
+        dateOfBirth: '',
+        ndisNumber: '',
+        address: null,
+        phone: null,
+        email: null,
+        notes: null,
+        createdAt: '',
+        updatedAt: '',
+        alerts: await db.alertsFor<ParticipantAlert>(id),
+        contacts: await db.contactsFor<EmergencyContact>(id),
+        emergencyPlan: await db.emergencyPlanFor<EmergencyPlan>(id),
+      },
+      partial: true,
+    };
+  }
+}
+
+/* -------------------------------------------------------------- care plans */
+
+/**
+ * The plans for a participant.
+ *
+ * Local first, because doc 01 §11 lists reading a care plan as something that
+ * must work with no connection: the instructions for the person in front of you
+ * are the last thing that should need signal.
+ */
+export async function readCarePlans(participantId: string): Promise<CarePlan[]> {
+  const db = local();
+  return db ? db.carePlansFor<CarePlan>(participantId) : api.listCarePlans(participantId);
+}
+
+export async function readCarePlan(id: string): Promise<CarePlan | null> {
+  const db = local();
+  if (!db) return api.getCarePlan(id);
+  return (await db.carePlan<CarePlan>(id)) ?? api.getCarePlan(id);
+}
+
+/**
+ * Records that this worker has read the current version.
+ *
+ * The marker clears on the device straight away and the receipt goes up through
+ * the outbox, so a plan read in a house with no signal does not keep nagging
+ * until the phone finds a tower.
+ */
+export async function markCarePlanRead(plan: CarePlan): Promise<{ queued: boolean }> {
+  const request: MarkCarePlanReadRequest = {
+    id: uuidv7(),
+    readAt: new Date().toISOString(),
+  };
+
+  const db = local();
+  if (!db) {
+    await api.markCarePlanRead(plan.id, request);
+    return { queued: false };
+  }
+
+  await db.markCarePlanReadLocally(plan.id, { ...plan, unread: false });
+  await store().enqueue({
+    opId: uuidv7(),
+    kind: 'care_plan.read',
+    participantId: plan.participantId,
+    carePlanId: plan.id,
+    payload: request,
+  });
+
+  return { queued: true };
 }
 
 /* -------------------------------------------------------------- medications */

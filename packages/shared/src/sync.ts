@@ -8,6 +8,7 @@ import {
 } from './checks.js';
 import { checkTemplateSchema, templateVersionSchema } from './templates.js';
 import { checkScheduleSchema } from './schedules.js';
+import { carePlanSchema, markCarePlanReadRequestSchema } from './careplans.js';
 import {
   medicationAdministrationSchema,
   medicationDoseSchema,
@@ -65,6 +66,7 @@ export const syncEntities = [
   'check_template',
   'check_template_version',
   'check_schedule',
+  'care_plan',
   'medication',
   'missed_reason_code',
   'diary_category',
@@ -178,6 +180,7 @@ export const syncChangeSchema = z.discriminatedUnion('entity', [
   change('check_template', checkTemplateSchema),
   change('check_template_version', templateVersionSchema),
   change('check_schedule', checkScheduleSchema),
+  change('care_plan', carePlanSchema),
   change('medication', medicationSchema),
   change('missed_reason_code', missedReasonCodeSchema),
   change('diary_category', diaryCategorySchema),
@@ -287,6 +290,7 @@ export const outboxOperationKinds = [
   'miss_reason.put',
   'medication.sign_off',
   'medication.prn',
+  'care_plan.read',
   'diary_entry.create',
   'diary_entry.update',
   'attachment.create',
@@ -338,6 +342,13 @@ export const outboxOperationSchema = z.discriminatedUnion('kind', [
     kind: z.literal('medication.prn'),
     participantId: z.string().uuid(),
     payload: recordPrnRequestSchema,
+  }),
+  z.object({
+    opId: z.string().uuid(),
+    kind: z.literal('care_plan.read'),
+    participantId: z.string().uuid(),
+    carePlanId: z.string().uuid(),
+    payload: markCarePlanReadRequestSchema,
   }),
   z.object({
     opId: z.string().uuid(),

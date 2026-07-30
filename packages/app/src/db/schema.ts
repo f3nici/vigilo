@@ -17,7 +17,7 @@
  * Today screen sorts and groups by, so that screen is one query with no joins.
  */
 
-export const LOCAL_SCHEMA_VERSION = 2;
+export const LOCAL_SCHEMA_VERSION = 3;
 
 /**
  * Migrations, applied in order and recorded. A device that has been away for
@@ -270,6 +270,27 @@ export const migrations: readonly { version: number; statements: readonly string
          ON medication_administrations (participant_id, administered_at DESC)`,
     ],
   },
+
+  /*
+   * Phase 8. Care plans only: incidents are deliberately not held on a device
+   * (doc 05 §3 lists what flows, and they are not on it). Raising one needs the
+   * detail a person types sitting down afterwards, and an incident narrative is
+   * the most sensitive text in the product to leave on a phone (D67).
+   */
+  {
+    version: 3,
+    statements: [
+      `CREATE TABLE IF NOT EXISTS care_plans (
+         id             TEXT PRIMARY KEY,
+         participant_id TEXT NOT NULL,
+         title          TEXT NOT NULL,
+         unread         INTEGER NOT NULL,
+         revision       INTEGER NOT NULL,
+         sealed         TEXT NOT NULL
+       )`,
+      `CREATE INDEX IF NOT EXISTS care_plans_participant ON care_plans (participant_id, title)`,
+    ],
+  },
 ];
 
 /** Every table holding synced or queued data, for a wipe or a scope purge. */
@@ -291,6 +312,7 @@ export const dataTables = [
   'medications',
   'medication_doses',
   'medication_administrations',
+  'care_plans',
   'outbox',
   'attachment_queue',
 ] as const;
@@ -318,6 +340,7 @@ export const entityTables: Record<string, string> = {
   medication: 'medications',
   medication_dose: 'medication_doses',
   medication_administration: 'medication_administrations',
+  care_plan: 'care_plans',
 };
 
 /** Tables keyed by participant, which a scope revocation clears (doc 05 §4). */
@@ -334,4 +357,5 @@ export const participantScopedTables = [
   'medications',
   'medication_doses',
   'medication_administrations',
+  'care_plans',
 ] as const;

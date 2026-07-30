@@ -113,6 +113,20 @@
       "when": 1785330769198,
       "tag": "0015_medication_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1785369163772,
+      "tag": "0016_care_plans_and_incidents",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1785369163773,
+      "tag": "0017_care_plan_and_incident_triggers",
+      "breakpoints": true
     }
   ]
 }

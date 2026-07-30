@@ -444,6 +444,99 @@ describe('the local database', () => {
     });
   });
 
+  /* --------------------------------------------------------- care plans */
+
+  describe('care plans', () => {
+    const PLAN = '01930000-0000-7000-8000-00000000d001';
+
+    function planChange(revision: number, unread: boolean): SyncChange {
+      return {
+        entity: 'care_plan',
+        id: PLAN,
+        participantId: PARTICIPANT,
+        revision,
+        row: {
+          id: PLAN,
+          participantId: PARTICIPANT,
+          title: 'Daily support',
+          status: 'published',
+          currentVersionId: '01930000-0000-7000-8000-00000000d002',
+          currentVersion: 1,
+          publishedAt: '2026-07-28T00:00:00.000Z',
+          changeSummary: 'First version',
+          body: '## Seizure plan\n\n- Stay with them',
+          unread,
+          hasDraft: false,
+          createdAt: '2026-07-28T00:00:00.000Z',
+          updatedAt: '2026-07-28T00:00:00.000Z',
+        },
+      };
+    }
+
+    beforeEach(async () => {
+      await store.applyPage({
+        changes: [participantChange(PARTICIPANT, 10), planChange(11, true)],
+        tombstones: [],
+        scopeChanges: [],
+        nextRevision: 11,
+        at: '2026-07-28T00:00:00.000Z',
+      });
+    });
+
+    it('holds the published body so a worker can read it with no signal', async () => {
+      const plans = await store.carePlansFor<{ title: string; body: string }>(PARTICIPANT);
+      expect(plans).toHaveLength(1);
+      expect(plans[0]?.body).toContain('Seizure plan');
+    });
+
+    it('keeps the body inside the sealed blob', async () => {
+      const rows = await db.all<{ sealed: string }>('SELECT sealed FROM care_plans');
+      expect(rows[0]?.sealed).not.toContain('Seizure');
+    });
+
+    it('counts what is unread, and clears it when opened', async () => {
+      expect(await store.unreadCarePlanCount()).toBe(1);
+
+      const plan = await store.carePlan<{ id: string; unread: boolean }>(PLAN);
+      await store.markCarePlanReadLocally(PLAN, { ...plan, unread: false });
+
+      expect(await store.unreadCarePlanCount()).toBe(0);
+      expect((await store.carePlan<{ unread: boolean }>(PLAN))?.unread).toBe(false);
+    });
+
+    it('goes unread again when a new version arrives', async () => {
+      await store.markCarePlanReadLocally(PLAN, { id: PLAN, unread: false });
+      await store.applyPage({
+        changes: [planChange(12, true)],
+        tombstones: [],
+        scopeChanges: [],
+        nextRevision: 12,
+        at: '2026-07-29T00:00:00.000Z',
+      });
+
+      expect(await store.unreadCarePlanCount()).toBe(1);
+    });
+
+    it('goes with a revocation', async () => {
+      await store.applyPage({
+        changes: [],
+        tombstones: [],
+        scopeChanges: [
+          {
+            participantId: PARTICIPANT,
+            effect: 'revoked',
+            at: '2026-07-29T00:00:00.000Z',
+            revision: 20,
+          },
+        ],
+        nextRevision: 20,
+        at: '2026-07-29T00:00:00.000Z',
+      });
+
+      expect(await store.carePlansFor(PARTICIPANT)).toHaveLength(0);
+    });
+  });
+
   describe('the outbox', () => {
     const OP = '01930000-0000-7000-8000-00000000e001';
 

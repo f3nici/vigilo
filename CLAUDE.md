@@ -4,7 +4,7 @@ Care records platform for a disability support team. Participant diaries and
 admin-defined observation checks, working offline. Ships as an installable PWA
 first, with native Android and iOS builds as the final phases.
 
-**Status: Phases 0 to 7 done.** Phase 5 was the v1 line and everything since is
+**Status: Phases 0 to 8 done.** Phase 5 was the v1 line and everything since is
 additive. Monorepo, Docker Compose and CI; identity, roles, TOTP, the
 break-glass CLI, the scope resolver, the audit log and the encryption layer;
 participant records with alerts, emergency contacts, emergency plans and
@@ -19,8 +19,10 @@ the attachment queue and Web Push; reports: the daily PDF, trends with gaps
 preserved, the compliance report and audited CSV exports; and the medication
 administration record with materialised doses on the same coverage rules,
 sign-off with notes and witnesses, PRN recording and offline sign-off through
-the existing outbox.
-**Phase 8 (care plans and incidents) is next**, in `docs/09-roadmap.md`.
+the existing outbox; and care plans with versions, publishing, read receipts
+and unread markers, plus incidents with the full field set, the status
+workflow, follow-up actions and a PDF.
+**Phase 9 (participant self-access) is next**, in `docs/09-roadmap.md`.
 
 ## Read before building
 
@@ -138,6 +140,12 @@ service container.
 - **A medication sign-off is never deleted.** The app database role has no
   DELETE on `medication_administrations`, enforced by a grant, and there is no
   route that would use one.
+- **A care plan body is source text, never HTML** (D63). `renderCarePlan` in
+  shared escapes everything before emitting one of eight tags, both sides call
+  it, and DOMPurify runs over its output in the browser as a second layer.
+  Nothing anywhere stores or trusts HTML.
+- **Incidents never reach a device** (D67) and are never visible to a
+  participant account, refused in the service rather than hidden in the UI.
 - **Medication has no clinical checking and never will.** No interactions, no
   maximum daily totals, no dose validation. A dose is text transcribed off a
   label, and software that does arithmetic on doses is software that can get a

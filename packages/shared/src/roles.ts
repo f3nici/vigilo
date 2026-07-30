@@ -104,6 +104,22 @@ export function canManageReasonCodes(role: Role): boolean {
 }
 
 /**
+ * Care plans (doc 01 §3.6, §7.1).
+ *
+ * A nurse authors and publishes; a team leader does not. Clinical authority and
+ * administrative authority are separate, which is the same split that puts
+ * check forms with the nurse and schedules with the team leader.
+ */
+export function canWriteCarePlans(role: Role): boolean {
+  return role === 'admin' || role === 'nurse';
+}
+
+/** Every staff role reads them. Reading the plan is how the work gets done. */
+export function canReadCarePlans(role: Role): boolean {
+  return role !== 'participant';
+}
+
+/**
  * Medications (doc 01 §7.2).
  *
  * Deciding what a person takes is a clinical judgement, so it sits with the

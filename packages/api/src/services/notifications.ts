@@ -197,3 +197,37 @@ export async function runNotifications(
 }
 
 export { pruneNotificationHistory } from './push.js';
+
+/**
+ * A published care plan (doc 01 §9).
+ *
+ * Every worker currently assigned to the participant, and nobody else: this is
+ * "read the new instructions", which is only meaningful to somebody who will be
+ * standing in the room. Deduplicated by the version id, so republishing the
+ * same version twice notifies once and a second version notifies again.
+ */
+export async function notifyCarePlanPublished(
+  db: Database,
+  keyRing: KeyRing,
+  keys: VapidKeys | null,
+  input: { participantId: string; carePlanId: string; versionId: string },
+  now = new Date(),
+): Promise<number> {
+  if (!isConfigured(keys)) return 0;
+
+  const userIds = await assignedUserIds(db, input.participantId, now);
+  if (userIds.length === 0) return 0;
+
+  const payload = buildNotification('care_plan_published', {
+    participantName: await notifiableName(db, keyRing, input.participantId),
+    participantId: input.participantId,
+    carePlanId: input.carePlanId,
+  });
+
+  let sent = 0;
+  for (const userId of userIds) {
+    const result = await notify(db, keys, userId, 'care_plan_published', input.versionId, payload);
+    sent += result.sent;
+  }
+  return sent;
+}

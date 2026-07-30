@@ -17,6 +17,8 @@ export const notificationKinds = [
   'escalation',
   /** Records have been sitting unsent on this device for a day. */
   'sync_stale',
+  /** A new version of a care plan was published for an assigned participant. */
+  'care_plan_published',
 ] as const;
 
 export const notificationKindSchema = z.enum(notificationKinds);
@@ -28,6 +30,7 @@ export const notificationPreferencesSchema = z.object({
   check_overdue: z.boolean(),
   escalation: z.boolean(),
   sync_stale: z.boolean(),
+  care_plan_published: z.boolean(),
 });
 
 export type NotificationPreferences = z.infer<typeof notificationPreferencesSchema>;
@@ -42,6 +45,7 @@ export const defaultNotificationPreferences: NotificationPreferences = {
   check_overdue: true,
   escalation: true,
   sync_stale: true,
+  care_plan_published: true,
 };
 
 export const updateNotificationPreferencesSchema = notificationPreferencesSchema
@@ -114,7 +118,13 @@ export function pushSafeName(firstName: string, lastName: string): string {
 
 export function buildNotification(
   kind: NotificationKind,
-  input: { participantName: string; participantId: string; windowId?: string; minutes?: number },
+  input: {
+    participantName: string;
+    participantId: string;
+    windowId?: string;
+    minutes?: number;
+    carePlanId?: string;
+  },
 ): PushPayload {
   const link =
     input.windowId === undefined
@@ -161,6 +171,16 @@ export function buildNotification(
         body: 'Open Vigilo while you have signal so the records you saved can be sent.',
         url: '/today',
         tag: 'sync-stale',
+      };
+    case 'care_plan_published':
+      return {
+        kind,
+        title: 'Care plan updated',
+        body: `${input.participantName} has a new version of their care plan to read.`,
+        // The plan, not the change summary: what changed is about a person and
+        // a push payload is the one place that never goes (CLAUDE.md).
+        url: `/participants/${input.participantId}?tab=care-plan`,
+        tag: `care-plan:${input.carePlanId ?? input.participantId}`,
       };
   }
 }

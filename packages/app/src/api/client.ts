@@ -26,6 +26,9 @@ import {
   windowDetailSchema,
   participantDetailSchema,
   participantSummarySchema,
+  carePlanSchema,
+  carePlanVersionSchema,
+  incidentSchema,
   medicationAdministrationSchema,
   medicationDoseSchema,
   medicationSchema,
@@ -60,7 +63,22 @@ import {
   type EntryRevision,
   type ErrorCode,
   type HealthResponse,
+  type CarePlan,
+  type CarePlanVersion,
+  type CloseIncidentRequest,
+  type CompleteIncidentActionRequest,
+  type CreateCarePlanRequest,
+  type CreateIncidentActionRequest,
+  type CreateIncidentRequest,
   type CreateMedicationRequest,
+  type Incident,
+  type IncidentQuery,
+  type MarkCarePlanReadRequest,
+  type PublishCarePlanVersionRequest,
+  type ReopenIncidentRequest,
+  type UpdateCarePlanRequest,
+  type UpdateCarePlanVersionRequest,
+  type UpdateIncidentRequest,
   type Medication,
   type MedicationAdministration,
   type MedicationDose,
@@ -1204,4 +1222,187 @@ export async function listColleagues(): Promise<Colleague[]> {
   return z
     .object({ colleagues: z.array(colleagueSchema) })
     .parse(await request('/v1/me/colleagues')).colleagues;
+}
+
+/* ------------------------------------------------------- care plans */
+
+// Doc 04 §10.
+const carePlanListSchema = z.object({ carePlans: z.array(carePlanSchema) });
+
+export async function listCarePlans(participantId: string): Promise<CarePlan[]> {
+  return carePlanListSchema.parse(await request(`/v1/participants/${participantId}/care-plans`))
+    .carePlans;
+}
+
+export async function getCarePlan(id: string): Promise<CarePlan> {
+  return z.object({ carePlan: carePlanSchema }).parse(await request(`/v1/care-plans/${id}`))
+    .carePlan;
+}
+
+export async function createCarePlan(
+  participantId: string,
+  input: CreateCarePlanRequest,
+): Promise<CarePlan> {
+  return z.object({ carePlan: carePlanSchema }).parse(
+    await request(`/v1/participants/${participantId}/care-plans`, {
+      method: 'POST',
+      body: input,
+    }),
+  ).carePlan;
+}
+
+export async function updateCarePlan(id: string, input: UpdateCarePlanRequest): Promise<CarePlan> {
+  return z
+    .object({ carePlan: carePlanSchema })
+    .parse(await request(`/v1/care-plans/${id}`, { method: 'PATCH', body: input })).carePlan;
+}
+
+export async function listCarePlanVersions(id: string): Promise<CarePlanVersion[]> {
+  return z
+    .object({ versions: z.array(carePlanVersionSchema) })
+    .parse(await request(`/v1/care-plans/${id}/versions`)).versions;
+}
+
+/** The draft to edit, made from what is published if there is not one yet. */
+export async function openCarePlanDraft(id: string): Promise<CarePlanVersion | null> {
+  return z
+    .object({ draft: carePlanVersionSchema.nullable() })
+    .parse(await request(`/v1/care-plans/${id}/draft`, { method: 'PUT' })).draft;
+}
+
+export async function updateCarePlanDraft(
+  versionId: string,
+  input: UpdateCarePlanVersionRequest,
+): Promise<CarePlanVersion[]> {
+  return z
+    .object({ versions: z.array(carePlanVersionSchema) })
+    .parse(await request(`/v1/care-plan-versions/${versionId}`, { method: 'PATCH', body: input }))
+    .versions;
+}
+
+export async function publishCarePlanVersion(
+  versionId: string,
+  input: PublishCarePlanVersionRequest,
+): Promise<{ carePlan: CarePlan; notified: number }> {
+  return z.object({ carePlan: carePlanSchema, notified: z.number() }).parse(
+    await request(`/v1/care-plan-versions/${versionId}/publish`, {
+      method: 'POST',
+      body: input,
+    }),
+  );
+}
+
+export async function discardCarePlanDraft(versionId: string): Promise<void> {
+  await request(`/v1/care-plan-versions/${versionId}`, { method: 'DELETE' });
+}
+
+export async function markCarePlanRead(
+  id: string,
+  input: MarkCarePlanReadRequest,
+): Promise<CarePlan> {
+  return z
+    .object({ carePlan: carePlanSchema })
+    .parse(await request(`/v1/care-plans/${id}/read`, { method: 'POST', body: input })).carePlan;
+}
+
+export async function listCarePlanReceipts(
+  id: string,
+): Promise<{ userId: string; displayName: string; readAt: string }[]> {
+  return z
+    .object({
+      receipts: z.array(
+        z.object({ userId: z.string(), displayName: z.string(), readAt: z.string() }),
+      ),
+    })
+    .parse(await request(`/v1/care-plans/${id}/read-receipts`)).receipts;
+}
+
+/* -------------------------------------------------------- incidents */
+
+const incidentListSchema = z.object({
+  incidents: z.array(incidentSchema),
+  timeZone: z.string(),
+});
+
+export async function listIncidents(
+  participantId: string,
+  query: Partial<IncidentQuery> = {},
+): Promise<{ incidents: Incident[]; timeZone: string }> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== '') params.set(key, String(value));
+  }
+  const suffix = params.toString() === '' ? '' : `?${params.toString()}`;
+  return incidentListSchema.parse(
+    await request(`/v1/participants/${participantId}/incidents${suffix}`),
+  );
+}
+
+export async function listRecentIncidents(limit?: number): Promise<Incident[]> {
+  const suffix = limit === undefined ? '' : `?limit=${limit}`;
+  return z
+    .object({ incidents: z.array(incidentSchema) })
+    .parse(await request(`/v1/me/incidents/recent${suffix}`)).incidents;
+}
+
+export async function getIncident(id: string): Promise<Incident> {
+  return z.object({ incident: incidentSchema }).parse(await request(`/v1/incidents/${id}`))
+    .incident;
+}
+
+export async function createIncident(
+  participantId: string,
+  input: CreateIncidentRequest,
+): Promise<Incident> {
+  return z.object({ incident: incidentSchema }).parse(
+    await request(`/v1/participants/${participantId}/incidents`, {
+      method: 'POST',
+      body: input,
+    }),
+  ).incident;
+}
+
+export async function updateIncident(id: string, input: UpdateIncidentRequest): Promise<Incident> {
+  return z
+    .object({ incident: incidentSchema })
+    .parse(await request(`/v1/incidents/${id}`, { method: 'PATCH', body: input })).incident;
+}
+
+export async function closeIncident(
+  id: string,
+  input: CloseIncidentRequest,
+): Promise<{ incident: Incident; actionsOutstanding: number }> {
+  return z
+    .object({ incident: incidentSchema, actionsOutstanding: z.number() })
+    .parse(await request(`/v1/incidents/${id}/close`, { method: 'POST', body: input }));
+}
+
+export async function reopenIncident(id: string, input: ReopenIncidentRequest): Promise<Incident> {
+  return z
+    .object({ incident: incidentSchema })
+    .parse(await request(`/v1/incidents/${id}/reopen`, { method: 'POST', body: input })).incident;
+}
+
+export async function addIncidentAction(
+  id: string,
+  input: CreateIncidentActionRequest,
+): Promise<Incident> {
+  return z
+    .object({ incident: incidentSchema })
+    .parse(await request(`/v1/incidents/${id}/actions`, { method: 'POST', body: input })).incident;
+}
+
+export async function completeIncidentAction(
+  actionId: string,
+  input: CompleteIncidentActionRequest,
+): Promise<Incident> {
+  return z
+    .object({ incident: incidentSchema })
+    .parse(
+      await request(`/v1/incident-actions/${actionId}/complete`, { method: 'POST', body: input }),
+    ).incident;
+}
+
+export function incidentPdfUrl(id: string): string {
+  return `/api/v1/incidents/${id}/pdf`;
 }

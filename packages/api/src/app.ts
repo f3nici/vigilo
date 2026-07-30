@@ -36,6 +36,15 @@ import {
   myDoseRoutes,
   participantMedicationRoutes,
 } from './routes/medications.js';
+import {
+  carePlanRoutes,
+  carePlanVersionRoutes,
+  incidentActionRoutes,
+  incidentRoutes,
+  myIncidentRoutes,
+  participantCarePlanRoutes,
+  participantIncidentRoutes,
+} from './routes/clinical.js';
 import { syncRoutes, deviceRoutes } from './routes/sync.js';
 import { exportRoutes, reportRoutes } from './routes/reports.js';
 import { notificationPreferenceRoutes, pushRoutes } from './routes/push.js';
@@ -132,6 +141,16 @@ export function createApp(config: Config, logger: Logger, db: Database, keyRing:
   app.use('/api/v1/medication-administrations', administrationRoutes(db, keyRing));
   app.use('/api/v1/me', myDoseRoutes(db, keyRing));
   app.use('/api/v1/me', colleagueRoutes(db));
+
+  // Care plans and incidents (doc 04 §10), in their own file for the same
+  // reason as the checks, the diary and the medications.
+  app.use('/api/v1/participants', participantCarePlanRoutes(db, keyRing));
+  app.use('/api/v1/care-plans', carePlanRoutes(db, keyRing));
+  app.use('/api/v1/care-plan-versions', carePlanVersionRoutes(db, keyRing, vapidKeys(config)));
+  app.use('/api/v1/participants', participantIncidentRoutes(db, keyRing));
+  app.use('/api/v1/incidents', incidentRoutes(db, keyRing));
+  app.use('/api/v1/incident-actions', incidentActionRoutes(db, keyRing));
+  app.use('/api/v1/me', myIncidentRoutes(db, keyRing));
 
   // Sync and push. Everything they touch already exists; these are the two
   // surfaces that put it on a phone with no signal (doc 04 §13 and §14).

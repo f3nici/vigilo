@@ -18,8 +18,11 @@ import ParticipantAssignments from '@/components/ParticipantAssignments.vue';
 import ParticipantChecks from '@/components/ParticipantChecks.vue';
 import ParticipantDiary from '@/components/ParticipantDiary.vue';
 import ParticipantMedications from '@/components/ParticipantMedications.vue';
+import ParticipantCarePlans from '@/components/ParticipantCarePlans.vue';
+import ParticipantIncidents from '@/components/ParticipantIncidents.vue';
 import ParticipantTimeline from '@/components/ParticipantTimeline.vue';
 import * as api from '@/api/client';
+import { readParticipant } from '@/lib/records';
 import { ApiRequestError } from '@/api/client';
 import { useSessionStore } from '@/stores/session';
 import { ageInYears, formatDate, timeRemaining } from '@/lib/format';
@@ -40,6 +43,8 @@ const id = computed(() => (typeof route.params.id === 'string' ? route.params.id
 
 const participant = ref<ParticipantDetail | null>(null);
 const loading = ref(true);
+/** True when this came from the device, which holds no administrative detail. */
+const partial = ref(false);
 const error = ref('');
 const confirmingArchive = ref(false);
 
@@ -47,7 +52,9 @@ const tabs = [
   { key: 'timeline', label: 'Timeline' },
   { key: 'checks', label: 'Checks' },
   { key: 'medication', label: 'Medication' },
+  { key: 'care-plan', label: 'Care plan' },
   { key: 'diary', label: 'Diary' },
+  { key: 'incidents', label: 'Incidents' },
   { key: 'info', label: 'Info' },
 ] as const;
 
@@ -59,7 +66,9 @@ const canManage = computed(() => canManageParticipants(role.value));
 async function load(): Promise<void> {
   error.value = '';
   try {
-    participant.value = await api.getParticipant(id.value);
+    const result = await readParticipant(id.value);
+    participant.value = result.participant;
+    partial.value = result.partial;
   } catch (err) {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not load that record.';
   } finally {
@@ -213,6 +222,10 @@ async function restore(): Promise<void> {
 
       <ParticipantMedications v-else-if="tab === 'medication'" :participant-id="participant.id" />
 
+      <ParticipantCarePlans v-else-if="tab === 'care-plan'" :participant-id="participant.id" />
+
+      <ParticipantIncidents v-else-if="tab === 'incidents'" :participant-id="participant.id" />
+
       <ParticipantDiary
         v-else-if="tab === 'diary'"
         :participant-id="participant.id"
@@ -222,7 +235,17 @@ async function restore(): Promise<void> {
       <template v-else>
         <section class="space-y-3">
           <h2 class="text-lg font-semibold">Details</h2>
-          <dl class="card grid gap-x-6 gap-y-3 p-4 sm:grid-cols-2">
+
+          <!--
+            Said plainly rather than shown as convincing blanks. The device
+            never holds the administrative detail, only what the work needs.
+          -->
+          <p v-if="partial" class="card text-text-secondary p-4">
+            These need a connection. Alerts, emergency contacts and the care plan are on this device
+            and are shown above.
+          </p>
+
+          <dl v-else class="card grid gap-x-6 gap-y-3 p-4 sm:grid-cols-2">
             <div>
               <dt class="text-text-secondary text-sm">Date of birth</dt>
               <dd class="tabular">
