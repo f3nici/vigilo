@@ -1025,6 +1025,171 @@ describe('sync', () => {
     });
   });
 
+  /* ------------------------------------------------------------ care plans */
+
+  describe('care plans through sync', () => {
+    /** A published plan and an unpublished draft, for the fixture. */
+    async function plans(fixture: Fixture) {
+      const created = await api(
+        fixture.admin,
+        'post',
+        `/api/v1/participants/${fixture.participantId}/care-plans`,
+      ).send({ title: 'Daily support', body: '## Seizure plan\n\n- Stay with them' });
+
+      const carePlanId = created.body.carePlan.id as string;
+      const draft = await api(fixture.admin, 'put', `/api/v1/care-plans/${carePlanId}/draft`);
+      await api(
+        fixture.admin,
+        'post',
+        `/api/v1/care-plan-versions/${draft.body.draft.id}/publish`,
+      ).send({ changeSummary: 'First version' });
+
+      // A second plan left in draft, which must never reach a device.
+      const unpublished = await api(
+        fixture.admin,
+        'post',
+        `/api/v1/participants/${fixture.participantId}/care-plans`,
+      ).send({ title: 'Not ready', body: '## Draft only' });
+
+      return { carePlanId, unpublishedId: unpublished.body.carePlan.id as string };
+    }
+
+    it('sends a published plan down with its body', async () => {
+      const fixture = await setUp();
+      const { carePlanId } = await plans(fixture);
+
+      const response = await api(fixture.worker, 'get', '/api/v1/sync/bootstrap', fixture.deviceId);
+      const changes = response.body.changes as {
+        entity: string;
+        id: string;
+        row: { title: string; body: string | null; unread: boolean };
+      }[];
+
+      const plan = changes.find(
+        (change) => change.entity === 'care_plan' && change.id === carePlanId,
+      );
+      expect(plan?.row.title).toBe('Daily support');
+      expect(plan?.row.body).toContain('Seizure plan');
+      // Nobody has opened it, so the phone knows to show the marker offline.
+      expect(plan?.row.unread).toBe(true);
+    });
+
+    it('never sends a draft plan to a device', async () => {
+      // A phone holding a draft could show a worker instructions nobody has
+      // approved, which is the whole reason publishing exists.
+      const fixture = await setUp();
+      const { unpublishedId } = await plans(fixture);
+
+      const response = await api(fixture.worker, 'get', '/api/v1/sync/bootstrap', fixture.deviceId);
+      const changes = response.body.changes as { entity: string; id: string }[];
+
+      expect(
+        changes.some((change) => change.entity === 'care_plan' && change.id === unpublishedId),
+      ).toBe(false);
+    });
+
+    it('applies a read receipt pushed from a device', async () => {
+      const fixture = await setUp();
+      const { carePlanId } = await plans(fixture);
+
+      const response = await push(fixture, [
+        {
+          opId: randomUUID(),
+          kind: 'care_plan.read',
+          participantId: fixture.participantId,
+          carePlanId,
+          payload: { id: randomUUID(), readAt: new Date().toISOString() },
+        },
+      ]);
+
+      expect(response.body.results[0].status).toBe('applied');
+
+      const after = await api(fixture.worker, 'get', `/api/v1/care-plans/${carePlanId}`);
+      expect(after.body.carePlan.unread).toBe(false);
+    });
+
+    it('applies the same receipt once however many times it arrives', async () => {
+      const fixture = await setUp();
+      const { carePlanId } = await plans(fixture);
+
+      const operation: OutboxOperation = {
+        opId: randomUUID(),
+        kind: 'care_plan.read',
+        participantId: fixture.participantId,
+        carePlanId,
+        payload: { id: randomUUID(), readAt: new Date().toISOString() },
+      };
+
+      const first = await push(fixture, [operation]);
+      const second = await push(fixture, [operation]);
+
+      expect(first.body.results[0].status).toBe('applied');
+      expect(second.body.results[0].status).toBe('duplicate');
+
+      const rows = await h.ownerDb.execute<{ count: string }>(
+        sql`select count(*)::text as count from care_plan_reads`,
+      );
+      expect(rows[0]?.count).toBe('1');
+    });
+
+    it('refuses a receipt for a participant this user has never had', async () => {
+      const fixture = await setUp();
+      const other = await api(
+        fixture.admin,
+        'post',
+        `/api/v1/participants/${fixture.otherParticipantId}/care-plans`,
+      ).send({ title: 'Theirs' });
+
+      const response = await push(fixture, [
+        {
+          opId: randomUUID(),
+          kind: 'care_plan.read',
+          participantId: fixture.otherParticipantId,
+          carePlanId: other.body.carePlan.id as string,
+          payload: { id: randomUUID(), readAt: new Date().toISOString() },
+        },
+      ]);
+
+      expect(response.body.results[0].status).toBe('rejected');
+      expect(response.body.results[0].error.code).toBe('scope_denied');
+    });
+
+    it('sends the plan again when a new version is published', async () => {
+      // The device has to learn the body changed and that it is unread again.
+      const fixture = await setUp();
+      const { carePlanId } = await plans(fixture);
+
+      const before = await api(fixture.worker, 'get', '/api/v1/sync/bootstrap', fixture.deviceId);
+      const cursor = before.body.revision as number;
+
+      const draft = await api(fixture.admin, 'put', `/api/v1/care-plans/${carePlanId}/draft`);
+      await api(fixture.admin, 'patch', `/api/v1/care-plan-versions/${draft.body.draft.id}`).send({
+        body: '## Seizure plan\n\n- Stay with them\n- Time it',
+      });
+      await api(
+        fixture.admin,
+        'post',
+        `/api/v1/care-plan-versions/${draft.body.draft.id}/publish`,
+      ).send({ changeSummary: 'Added timing' });
+
+      const after = await api(
+        fixture.worker,
+        'get',
+        `/api/v1/sync/changes?since=${cursor}`,
+        fixture.deviceId,
+      );
+
+      const changes = after.body.changes as {
+        entity: string;
+        id: string;
+        row: { body: string; changeSummary: string };
+      }[];
+      const plan = changes.find((one) => one.entity === 'care_plan' && one.id === carePlanId);
+      expect(plan?.row.body).toContain('Time it');
+      expect(plan?.row.changeSummary).toBe('Added timing');
+    });
+  });
+
   /* --------------------------------------------------------------- devices */
 
   describe('devices', () => {

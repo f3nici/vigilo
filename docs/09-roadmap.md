@@ -167,7 +167,7 @@ the compliance numbers match hand-counted windows in a seeded fixture.
 
 ---
 
-## Phase 8: Care plans and incidents
+## Phase 8: Care plans and incidents (done)
 
 - Care plans with versions, publish, read receipts, unread markers.
 - Rich text sanitised on write and render.

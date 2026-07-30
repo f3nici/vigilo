@@ -11,6 +11,7 @@ import {
 } from '@vigilo/shared';
 import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
+import { readParticipants } from '@/lib/records';
 import { ApiRequestError } from '@/api/client';
 import { useSessionStore } from '@/stores/session';
 import { timeRemaining } from '@/lib/format';
@@ -47,7 +48,17 @@ async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
-    participants.value = await api.listParticipants({ includeArchived: includeArchived.value });
+    /*
+     * Local first. Doc 01 §11 lists seeing your assigned participants as
+     * something that works with no connection, and it is the way in to the
+     * emergency panel and the care plan, which must both work offline.
+     *
+     * Archived people are only on the server: the device holds who you are
+     * working with now.
+     */
+    participants.value = includeArchived.value
+      ? await api.listParticipants({ includeArchived: true })
+      : await readParticipants();
   } catch (err) {
     error.value =
       err instanceof ApiRequestError ? err.message : 'Could not load the participant list.';

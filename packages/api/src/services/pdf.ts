@@ -1,11 +1,15 @@
 import PDFDocument from 'pdfkit';
 import type { Readable } from 'node:stream';
 import {
+  describeIncidentStatus,
+  describeSeverity,
   formatTimeOfDay,
+  outstandingActions,
   utcToZoned,
   type DailyDose,
   type DailyReport,
   type DailyWindow,
+  type Incident,
 } from '@vigilo/shared';
 
 /**
@@ -379,4 +383,170 @@ function rule(doc: PDFKit.PDFDocument): void {
 /** Starts a page rather than splitting a check across two. */
 function ensureRoom(doc: PDFKit.PDFDocument, needed: number): void {
   if (doc.y + needed > doc.page.height - MARGIN - 20) doc.addPage();
+}
+
+/* --------------------------------------------------------------- incidents */
+
+export type IncidentPdfContext = {
+  participantName: string;
+  orgName: string;
+  timeZone: string;
+  generatedAt: string;
+  generatedByName: string;
+};
+
+/**
+ * One incident as a PDF (doc 01 §7.3).
+ *
+ * The same shape as the daily report: serif body, headings in words rather than
+ * colour, and provenance on every page. This one is more likely than any other
+ * document here to be read by somebody outside the organisation, so it states
+ * the timing gap between the event and its discovery plainly, and it says how
+ * many follow-up actions were still outstanding rather than leaving a reader to
+ * count them.
+ */
+export function renderIncident(incident: Incident, context: IncidentPdfContext): Readable {
+  const doc = new PDFDocument({
+    size: 'A4',
+    margin: MARGIN,
+    bufferPages: true,
+    info: {
+      Title: `Incident, ${context.participantName}, ${incident.occurredAt.slice(0, 10)}`,
+      Author: context.orgName,
+      Subject: 'Incident record',
+      CreationDate: new Date(context.generatedAt),
+    },
+  });
+
+  const when = (iso: string) =>
+    new Intl.DateTimeFormat('en-AU', {
+      timeZone: context.timeZone,
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    }).format(new Date(iso));
+
+  doc.font(HEADING).fontSize(18).fillColor(INK).text('Incident record');
+  doc.moveDown(0.2);
+  doc.font(LABEL).fontSize(10).fillColor(MUTED);
+  doc.text(`${context.participantName} · ${context.orgName}`);
+  doc.text(`All times ${context.timeZone}`);
+  rule(doc);
+
+  const gapMinutes = Math.round(
+    (Date.parse(incident.discoveredAt) - Date.parse(incident.occurredAt)) / 60_000,
+  );
+  const gap =
+    gapMinutes < 60 ? `${gapMinutes} minutes later` : `${Math.round(gapMinutes / 60)} hours later`;
+
+  const facts: [string, string][] = [
+    ['Status', describeIncidentStatus(incident.status)],
+    ['Severity', describeSeverity(incident.severity)],
+    ['Occurred', when(incident.occurredAt)],
+    ['Discovered', `${when(incident.discoveredAt)} (${gap})`],
+    ['Reported by', incident.reportedByName ?? 'Not recorded'],
+    [
+      'Family notified',
+      incident.familyNotifiedAt === null ? 'Not recorded' : when(incident.familyNotifiedAt),
+    ],
+  ];
+
+  doc.fontSize(10);
+  for (const [label, value] of facts) {
+    doc.font(BODY).fillColor(INK).text(`${label}: `, { continued: true });
+    doc.font(BODY_BOLD).text(value);
+  }
+
+  section(doc, 'What happened', incident.detail);
+  section(doc, 'What was done straight away', incident.immediateAction);
+  if (incident.involved !== null) section(doc, 'Who was involved', incident.involved);
+  if (incident.injuries !== null) section(doc, 'Injuries', incident.injuries);
+
+  if (incident.actions.length > 0) {
+    ensureRoom(doc, 80);
+    rule(doc);
+    doc.font(HEADING).fontSize(11).fillColor(INK).text('Follow-up');
+    doc.moveDown(0.3);
+
+    for (const action of incident.actions) {
+      ensureRoom(doc, 44);
+      doc.font(BODY_BOLD).fontSize(10).fillColor(INK).text(action.action);
+
+      const notes = [
+        action.assignedToName ? `assigned to ${action.assignedToName}` : 'unassigned',
+        action.dueAt ? `due ${when(action.dueAt)}` : null,
+        action.completedAt
+          ? `done ${when(action.completedAt)}${action.completedByName ? ` by ${action.completedByName}` : ''}`
+          : 'not done',
+      ].filter((one): one is string => one !== null);
+
+      doc.font(LABEL).fontSize(8).fillColor(MUTED).text(notes.join(' · '), { indent: 12 });
+      if (action.note !== null) {
+        doc.font(BODY).fontSize(10).fillColor(INK).text(action.note, { indent: 12 });
+      }
+      doc.moveDown(0.3);
+    }
+  }
+
+  if (incident.status === 'closed') {
+    ensureRoom(doc, 80);
+    rule(doc);
+    doc.font(HEADING).fontSize(11).fillColor(INK).text('Closure');
+    doc.moveDown(0.3);
+    doc.font(BODY).fontSize(10).fillColor(INK);
+    doc.text(
+      `Closed ${incident.closedAt === null ? '' : when(incident.closedAt)}${incident.closedByName ? ` by ${incident.closedByName}` : ''}.`,
+    );
+    if (incident.closureNotes !== null) {
+      doc.moveDown(0.2);
+      doc.text(incident.closureNotes);
+    }
+
+    const still = outstandingActions(incident.actions);
+    if (still > 0) {
+      doc.moveDown(0.3);
+      doc.font(BODY_BOLD).fontSize(10).fillColor(INK);
+      // Stated rather than left to be counted. Closing a review does not
+      // finish the work, and a reader deserves to be told.
+      doc.text(
+        `${still} follow-up ${still === 1 ? 'action was' : 'actions were'} still outstanding when this was closed.`,
+      );
+    }
+  }
+
+  incidentFooters(doc, incident, context);
+
+  doc.end();
+  return doc as unknown as Readable;
+}
+
+function section(doc: PDFKit.PDFDocument, title: string, body: string): void {
+  ensureRoom(doc, 70);
+  doc.moveDown(0.5);
+  doc.font(HEADING).fontSize(11).fillColor(INK).text(title);
+  doc.moveDown(0.2);
+  doc.font(BODY).fontSize(10).fillColor(INK).text(body);
+}
+
+function incidentFooters(
+  doc: PDFKit.PDFDocument,
+  incident: Incident,
+  context: IncidentPdfContext,
+): void {
+  const range = doc.bufferedPageRange();
+  const generated = new Intl.DateTimeFormat('en-AU', {
+    timeZone: context.timeZone,
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(context.generatedAt));
+
+  for (let index = 0; index < range.count; index += 1) {
+    doc.switchToPage(range.start + index);
+    doc.font(LABEL).fontSize(8).fillColor(MUTED);
+    doc.text(
+      `Incident ${incident.id.slice(0, 8)} · ${context.participantName} · generated ${generated} by ${context.generatedByName} · page ${index + 1} of ${range.count}`,
+      MARGIN,
+      doc.page.height - MARGIN + 8,
+      { width: doc.page.width - MARGIN * 2, align: 'center', lineBreak: false },
+    );
+  }
 }

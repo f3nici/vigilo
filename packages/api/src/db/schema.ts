@@ -107,6 +107,14 @@ export const attachmentUploadStateEnum = pgEnum('attachment_upload_state', [
   'complete',
   'failed',
 ]);
+export const carePlanStatusEnum = pgEnum('care_plan_status', ['draft', 'published', 'archived']);
+export const carePlanVersionStatusEnum = pgEnum('care_plan_version_status', [
+  'draft',
+  'published',
+  'superseded',
+]);
+export const incidentSeverityEnum = pgEnum('incident_severity', ['low', 'moderate', 'high']);
+export const incidentStatusEnum = pgEnum('incident_status', ['open', 'under_review', 'closed']);
 export const administrationStatusEnum = pgEnum('medication_administration_status', [
   'given',
   'refused',
@@ -988,6 +996,180 @@ export const attachments = pgTable(
 );
 
 export type AttachmentRow = typeof attachments.$inferSelect;
+
+/* -------------------------------------------------------------- care plans */
+
+/**
+ * Care plans (doc 03 §9, doc 01 §7.1).
+ *
+ * Versioned the same way check templates are, and for the same reason: a plan
+ * that changes in March must not rewrite what the March record said the
+ * instructions were. A published version is immutable and a new one supersedes
+ * it.
+ */
+export const carePlans = pgTable(
+  'care_plans',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    status: carePlanStatusEnum('status').notNull().default('draft'),
+    /**
+     * No foreign key, deliberately. Versions point at the plan and the plan
+     * points at its current version, and a circular constraint would make both
+     * tables impossible to insert into without a deferred transaction. The
+     * service is the only writer and it sets this after the version exists.
+     */
+    currentVersionId: uuid('current_version_id'),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('care_plans_participant_idx').on(table.participantId, table.status),
+    index('care_plans_revision_idx').on(table.revision),
+  ],
+);
+
+export type CarePlanRow = typeof carePlans.$inferSelect;
+
+/**
+ * One version. `body_enc` holds the author's source text, not HTML.
+ *
+ * Doc 07 §7 lists DOMPurify on write and on render as the XSS mitigation. This
+ * takes it one step earlier: no HTML is ever stored, so there is no stored HTML
+ * for a missed sanitiser call to release. The renderer in
+ * `packages/shared/careplans.ts` escapes every character before it emits a tag,
+ * and both sides render from that one function (D63).
+ */
+export const carePlanVersions = pgTable(
+  'care_plan_versions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    carePlanId: uuid('care_plan_id')
+      .notNull()
+      .references(() => carePlans.id, { onDelete: 'cascade' }),
+    version: integer('version').notNull(),
+    bodyEnc: encrypted('body_enc'),
+    status: carePlanVersionStatusEnum('status').notNull().default('draft'),
+    changeSummary: text('change_summary'),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    publishedBy: uuid('published_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    unique('care_plan_versions_number_key').on(table.carePlanId, table.version),
+    index('care_plan_versions_plan_idx').on(table.carePlanId),
+    index('care_plan_versions_revision_idx').on(table.revision),
+  ],
+);
+
+export type CarePlanVersionRow = typeof carePlanVersions.$inferSelect;
+
+/**
+ * Read receipts, which drive the unread marker (doc 01 §7.1).
+ *
+ * No revision and no sync entity: a device needs to know whether *it* has read
+ * the current version, and that travels as a flag on the plan itself. Nobody
+ * needs a list of who else has read what on their phone.
+ */
+export const carePlanReads = pgTable(
+  'care_plan_reads',
+  {
+    id: uuid('id').primaryKey(),
+    carePlanVersionId: uuid('care_plan_version_id')
+      .notNull()
+      .references(() => carePlanVersions.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    readAt: timestamp('read_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique('care_plan_reads_once').on(table.carePlanVersionId, table.userId),
+    index('care_plan_reads_user_idx').on(table.userId),
+  ],
+);
+
+/* --------------------------------------------------------------- incidents */
+
+/**
+ * Incidents (doc 03 §9, doc 01 §7.3).
+ *
+ * **Never visible to a `participant` role account**, enforced in the scope
+ * layer rather than only in the UI. `involved_enc` is not in doc 03's column
+ * list; doc 01 §7.3 lists "who was involved" as a field, and it is free text
+ * because it includes people with no account (D66).
+ *
+ * The NDIS Commission reportable-incident workflow is explicitly out of scope.
+ */
+export const incidents = pgTable(
+  'incidents',
+  {
+    /** Device-generated, so an incident has identity before it is sent. */
+    id: uuid('id').primaryKey(),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    /** When somebody found out, which is not when it happened. */
+    discoveredAt: timestamp('discovered_at', { withTimezone: true }).notNull(),
+    reportedBy: uuid('reported_by').references(() => users.id),
+    summaryEnc: encrypted('summary_enc').notNull(),
+    detailEnc: encrypted('detail_enc').notNull(),
+    immediateActionEnc: encrypted('immediate_action_enc').notNull(),
+    injuriesEnc: encrypted('injuries_enc'),
+    involvedEnc: encrypted('involved_enc'),
+    severity: incidentSeverityEnum('severity').notNull(),
+    familyNotifiedAt: timestamp('family_notified_at', { withTimezone: true }),
+    status: incidentStatusEnum('status').notNull().default('open'),
+    closedBy: uuid('closed_by').references(() => users.id),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    closureNotesEnc: encrypted('closure_notes_enc'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('incidents_participant_idx').on(table.participantId, table.occurredAt),
+    index('incidents_status_idx').on(table.status),
+    index('incidents_revision_idx').on(table.revision),
+  ],
+);
+
+export type IncidentRow = typeof incidents.$inferSelect;
+
+/** Follow-up with an assignee and a due date (doc 01 §7.3). */
+export const incidentActions = pgTable(
+  'incident_actions',
+  {
+    id: uuid('id').primaryKey(),
+    incidentId: uuid('incident_id')
+      .notNull()
+      .references(() => incidents.id, { onDelete: 'cascade' }),
+    actionEnc: encrypted('action_enc').notNull(),
+    assignedTo: uuid('assigned_to').references(() => users.id),
+    dueAt: timestamp('due_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    completedBy: uuid('completed_by').references(() => users.id),
+    noteEnc: encrypted('note_enc'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    index('incident_actions_incident_idx').on(table.incidentId),
+    index('incident_actions_assignee_idx').on(table.assignedTo, table.completedAt),
+    index('incident_actions_revision_idx').on(table.revision),
+  ],
+);
+
+export type IncidentActionRow = typeof incidentActions.$inferSelect;
 
 /* -------------------------------------------------------------- medications */
 

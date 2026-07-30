@@ -28,6 +28,7 @@ import {
   diaryEntries,
   emergencyContacts,
   emergencyPlans,
+  carePlans,
   medicationAdministrations,
   medicationDoses,
   medications,
@@ -53,6 +54,7 @@ import { createAttachment, toAttachment } from './attachments.js';
 import { missReasonsByWindowIds, toCheckEntry, windowsByIds } from './windows.js';
 import { putEntry, putMissReason } from './entries.js';
 import { medicationsByIds } from './medications.js';
+import { carePlansByIds, markRead } from './careplans.js';
 import { administrationsByIds, dosesByIds, recordPrn, signOffDose } from './doses.js';
 import { getOrgSettings } from './org.js';
 import type { AuditActor } from './audit.js';
@@ -304,6 +306,26 @@ function sources(now: Date): Source[] {
         const schedules = await Promise.all(keys.map((key) => getSchedule(db, key.id)));
         return byId(schedules);
       },
+    },
+    {
+      entity: 'care_plan',
+      table: carePlans,
+      id: carePlans.id,
+      participantId: carePlans.participantId,
+      revision: carePlans.revision,
+      // Only what is published. A draft is an author's working copy, and a
+      // phone that held one could show a worker instructions nobody has
+      // approved.
+      extra: () => and(eq(carePlans.status, 'published')),
+      load: async (db, keyRing, keys, principal) =>
+        byId(
+          await carePlansByIds(
+            db,
+            keyRing,
+            keys.map((key) => key.id),
+            { userId: principal.userId, role: principal.role },
+          ),
+        ),
     },
     {
       entity: 'medication',
@@ -890,6 +912,21 @@ async function dispatch(
       };
     }
 
+    case 'care_plan.read': {
+      assertPushScope(scope, operation.participantId);
+      await markRead(
+        db,
+        operation.carePlanId,
+        operation.payload,
+        { userId: principal.userId, role: principal.role },
+        actor,
+      );
+      return {
+        entityId: operation.payload.id,
+        revision: await revisionOf(db, carePlans, operation.carePlanId),
+      };
+    }
+
     case 'medication.prn': {
       assertPushScope(scope, operation.participantId);
       const administration = await recordPrn(
@@ -983,7 +1020,8 @@ async function revisionOf(
     | typeof diaryEntries
     | typeof attachments
     | typeof windowMissReasons
-    | typeof medicationAdministrations,
+    | typeof medicationAdministrations
+    | typeof carePlans,
   id: string,
 ): Promise<number> {
   const [row] = await db

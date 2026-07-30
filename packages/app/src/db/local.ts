@@ -439,6 +439,20 @@ export class LocalStore {
           ],
         );
 
+      case 'care_plan':
+        return sqlUpsert(
+          'care_plans',
+          ['id', 'participant_id', 'title', 'unread', 'revision', 'sealed'],
+          [
+            change.id,
+            change.row.participantId,
+            change.row.title,
+            change.row.unread ? 1 : 0,
+            change.revision,
+            sealed,
+          ],
+        );
+
       case 'attachment':
         return sqlUpsert(
           'attachments',
@@ -501,6 +515,28 @@ export class LocalStore {
     );
   }
 
+  async contactsFor<T>(participantId: string): Promise<T[]> {
+    return this.unseal<T>(
+      await this.db.all<SealedRow>(
+        'SELECT sealed FROM contacts WHERE participant_id = ? ORDER BY sort_order',
+        [participantId],
+      ),
+    );
+  }
+
+  async emergencyPlanFor<T>(participantId: string): Promise<T | null> {
+    const rows = await this.db.all<SealedRow>(
+      'SELECT sealed FROM emergency_plans WHERE participant_id = ?',
+      [participantId],
+    );
+    return (await this.unseal<T>(rows))[0] ?? null;
+  }
+
+  async participant<T>(id: string): Promise<T | null> {
+    const rows = await this.db.all<SealedRow>('SELECT sealed FROM participants WHERE id = ?', [id]);
+    return (await this.unseal<T>(rows))[0] ?? null;
+  }
+
   async diaryFor<T>(participantId: string, limit = 100): Promise<T[]> {
     return this.unseal<T>(
       await this.db.all<SealedRow>(
@@ -545,6 +581,41 @@ export class LocalStore {
       windowId,
     ]);
     return (await this.unseal<T>(rows))[0] ?? null;
+  }
+
+  async carePlansFor<T>(participantId: string): Promise<T[]> {
+    return this.unseal<T>(
+      await this.db.all<SealedRow>(
+        'SELECT sealed FROM care_plans WHERE participant_id = ? ORDER BY title',
+        [participantId],
+      ),
+    );
+  }
+
+  async carePlan<T>(id: string): Promise<T | null> {
+    const rows = await this.db.all<SealedRow>('SELECT sealed FROM care_plans WHERE id = ?', [id]);
+    return (await this.unseal<T>(rows))[0] ?? null;
+  }
+
+  /** Plans published and not yet opened, for the badge on the participant list. */
+  async unreadCarePlanCount(): Promise<number> {
+    const rows = await this.db.all<{ count: number }>(
+      'SELECT count(*) AS count FROM care_plans WHERE unread = 1',
+    );
+    return Number(rows[0]?.count ?? 0);
+  }
+
+  /**
+   * Clears the unread marker the moment a worker opens the plan.
+   *
+   * The receipt itself goes up through the outbox; this is what stops the
+   * marker sitting there with no signal, which would teach people to ignore it.
+   */
+  async markCarePlanReadLocally(id: string, sealedPlan: unknown): Promise<void> {
+    await this.db.run('UPDATE care_plans SET unread = 0, sealed = ? WHERE id = ?', [
+      await this.store.seal(JSON.stringify(sealedPlan)),
+      id,
+    ]);
   }
 
   async dosesBetween<T>(from: string, to: string): Promise<T[]> {
@@ -931,6 +1002,8 @@ function entityIdOf(operation: OutboxOperation): string {
       return operation.payload.id;
     case 'medication.prn':
       return operation.payload.id;
+    case 'care_plan.read':
+      return operation.carePlanId;
     case 'attachment.create':
       return operation.payload.id;
   }
