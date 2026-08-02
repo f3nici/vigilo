@@ -637,14 +637,20 @@ async function dailyDoses(
   );
 }
 
-type EntryDetail = {
+export type EntryDetail = {
   recordedByName: string | null;
   recordedAt: string;
   editCount: number;
   values: { fieldKey: string; label: string; display: string }[];
 };
 
-async function entryDetails(
+/**
+ * Exported because the self-access day renders the same readings from the same
+ * entries. Two functions turning a check entry into a list of labelled values
+ * would be two chances to render a number differently on the participant's
+ * copy of their own record.
+ */
+export async function entryDetails(
   db: Database,
   keyRing: KeyRing,
   entryIds: readonly string[],

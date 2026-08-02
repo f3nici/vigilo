@@ -179,6 +179,25 @@ export function canManageDiaryCategories(role: Role): boolean {
 }
 
 /**
+ * Who gets records on a device (doc 05, doc 06 §6).
+ *
+ * A staff role does, because the work happens in houses with no signal. A
+ * self-access account does not, and this is not a simplification: the sync
+ * feed is scoped by participant, not by field, so a participant device would
+ * pull whole rows including the diary entries staff marked not visible and the
+ * checks nobody recorded. Self-access reads a purpose-built view over the
+ * network instead, and reads nothing when there is no network.
+ */
+export function canSyncOffline(role: Role): boolean {
+  return role !== 'participant';
+}
+
+/** The other half of the same rule: only this role uses the /me screens. */
+export function isSelfAccess(role: Role): boolean {
+  return role === 'participant';
+}
+
+/**
  * Who decides whether the participant sees an entry.
  *
  * Staff-controlled, per doc 01 §3.7: the person the entry is about cannot

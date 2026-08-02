@@ -24,6 +24,7 @@ export * from './push.js';
 export * from './reports.js';
 export * from './roles.js';
 export * from './schedules.js';
+export * from './selfaccess.js';
 export * from './sync.js';
 export * from './templates.js';
 export * from './time.js';

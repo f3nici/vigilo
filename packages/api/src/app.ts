@@ -46,12 +46,18 @@ import {
   participantIncidentRoutes,
 } from './routes/clinical.js';
 import { syncRoutes, deviceRoutes } from './routes/sync.js';
+import { selfAccessRoutes } from './routes/selfaccess.js';
 import { exportRoutes, reportRoutes } from './routes/reports.js';
 import { notificationPreferenceRoutes, pushRoutes } from './routes/push.js';
 import { createFileStore } from './services/storage.js';
 import { vapidKeys } from './services/vapid.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
-import { auditActorMiddleware, csrfProtection, loadPrincipal } from './middleware/principal.js';
+import {
+  auditActorMiddleware,
+  csrfProtection,
+  loadPrincipal,
+  restrictSelfAccess,
+} from './middleware/principal.js';
 
 export function createApp(config: Config, logger: Logger, db: Database, keyRing: KeyRing): Express {
   const app = express();
@@ -110,7 +116,13 @@ export function createApp(config: Config, logger: Logger, db: Database, keyRing:
 
   // Everything below resolves a principal first, so no route ever works out
   // who is calling for itself.
-  app.use('/api/v1', loadPrincipal(db), csrfProtection());
+  /*
+   * Everything below resolves a principal first, and a self-access account is
+   * cut down to its own three screens before any router sees it (doc 06 §6).
+   * That guard sits here rather than in each router so a route added later is
+   * refused by default.
+   */
+  app.use('/api/v1', loadPrincipal(db), csrfProtection(), restrictSelfAccess());
   app.use('/api/v1/auth', authRoutes(db, config, keyRing));
   app.use('/api/v1/users', userRoutes(db));
   app.use('/api/v1/participants', participantRoutes(db, keyRing));
@@ -151,6 +163,10 @@ export function createApp(config: Config, logger: Logger, db: Database, keyRing:
   app.use('/api/v1/incidents', incidentRoutes(db, keyRing));
   app.use('/api/v1/incident-actions', incidentActionRoutes(db, keyRing));
   app.use('/api/v1/me', myIncidentRoutes(db, keyRing));
+
+  // Participant self-access (doc 06 §6). Three read-only screens, and no
+  // participant id anywhere in them: the service reads it off the principal.
+  app.use('/api/v1/me', selfAccessRoutes(db, keyRing));
 
   // Sync and push. Everything they touch already exists; these are the two
   // surfaces that put it on a phone with no signal (doc 04 §13 and §14).

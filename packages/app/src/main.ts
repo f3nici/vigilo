@@ -1,5 +1,6 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
+import { canSyncOffline } from '@vigilo/shared';
 import App from './App.vue';
 import { router } from './router';
 import { useThemeStore } from './stores/theme';
@@ -35,6 +36,15 @@ void (async () => {
 
   const userId = session.principal?.userId;
   if (userId === undefined) return;
+
+  /*
+   * A self-access account keeps nothing on the device (doc 06 §6). Starting
+   * here would open a database that never receives a row, register a device
+   * that never syncs, and call a sync endpoint the server refuses for this
+   * role. Their three screens read over the network and say so when there is
+   * none.
+   */
+  if (!canSyncOffline(session.principal?.role ?? 'worker')) return;
 
   const offline = useOfflineStore();
   await offline.start(userId);

@@ -195,6 +195,77 @@ export function requireCapability(can: (role: Role) => boolean, message: string)
   };
 }
 
+/**
+ * The whole API surface a self-access account may reach (doc 06 §6).
+ *
+ * An allow-list, deliberately, and deliberately in one place rather than a
+ * guard added to each staff route. A participant is in scope for their own
+ * record, so `assertInScope` passes for them on every route that takes their
+ * id, and every one of those routes serves a staff DTO: the participant record
+ * with its NDIS number and its alerts, windows including the ones nobody
+ * recorded, the care plan, the medication chart. None of that is what doc 06
+ * §6 describes.
+ *
+ * Guarding each of them would work until phase 10 adds the eleventh, and the
+ * cost of forgetting is a participant reading something written about them
+ * that was never meant for them. This way a new route is refused by default
+ * and has to be named here to be reachable.
+ */
+const UUID_PATH = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+
+const SELF_ACCESS_ALLOWED: { methods: readonly string[] | 'any'; pattern: RegExp }[] = [
+  // Signing in, signing out, changing a password, enrolling in TOTP.
+  { methods: 'any', pattern: /^\/auth(\/|$)/ },
+  { methods: ['GET'], pattern: /^\/me\/day$/ },
+  { methods: ['GET'], pattern: /^\/me\/records$/ },
+  { methods: ['GET'], pattern: /^\/me\/reports\/daily\.pdf$/ },
+  /*
+   * A photo on one of their own visible entries. The attachment routes were
+   * already built for this: they apply the owning entry's read rule on top of
+   * scope, so a photo on an entry marked not visible answers not_found. Read
+   * methods only, so the DELETE that shares this path never reaches the
+   * capability check that would refuse it.
+   */
+  { methods: ['GET'], pattern: new RegExp(`^/attachments/${UUID_PATH}(/(thumb|meta))?$`, 'i') },
+];
+
+export function selfAccessMayReach(method: string, path: string): boolean {
+  // Express routes `/me/day/` and `/me/day` to the same handler, so they have
+  // to be the same answer here too.
+  const normalised = path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path;
+  const verb = method.toUpperCase();
+
+  return SELF_ACCESS_ALLOWED.some(
+    (allowed) =>
+      allowed.pattern.test(normalised) &&
+      (allowed.methods === 'any' || allowed.methods.includes(verb)),
+  );
+}
+
+/**
+ * Applied once, above every router, so nothing has to remember it.
+ *
+ * Mounted at `/api/v1`, which is why the patterns above are written without
+ * that prefix: `req.path` inside a mounted handler is the part after it.
+ */
+export function restrictSelfAccess(): RequestHandler {
+  return (req, _res, next) => {
+    // Not signed in, or signed in as staff. `requireAuth` on each router
+    // decides the first case; this middleware is only about the second.
+    if (!req.principal || req.principal.role !== 'participant') {
+      next();
+      return;
+    }
+
+    if (selfAccessMayReach(req.method, req.path)) {
+      next();
+      return;
+    }
+
+    next(new HttpError('scope_denied', 'Your account can only see your own record.'));
+  };
+}
+
 export function requireRole(...allowed: Role[]): RequestHandler {
   return (req, _res, next) => {
     const principal = currentPrincipal(req);

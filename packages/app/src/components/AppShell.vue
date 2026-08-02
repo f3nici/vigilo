@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
-import { canManageTemplates, canRecordChecks } from '@vigilo/shared';
+import { canManageTemplates, canRecordChecks, canSyncOffline } from '@vigilo/shared';
+import ContrastToggle from './ContrastToggle.vue';
 import ThemeToggle from './ThemeToggle.vue';
 import VigiloMark from './VigiloMark.vue';
 import SyncIndicator from './SyncIndicator.vue';
@@ -26,7 +27,23 @@ const showNotInstalled = computed(
   () => !offline.installed && canRecordChecks(session.principal?.role ?? 'worker'),
 );
 
+const syncs = computed(() => canSyncOffline(session.principal?.role ?? 'worker'));
+
 const nav = computed(() => {
+  /*
+   * Three screens and nothing else (doc 06 §6). Not the staff nav with items
+   * removed: a self-access account has no Today, no participant list and no
+   * System, and building this from the same array would mean every future
+   * staff item had to remember to exclude them.
+   */
+  if (session.principal?.role === 'participant') {
+    return [
+      { name: 'my-day', label: 'My day' },
+      { name: 'my-records', label: 'My records' },
+      { name: 'my-reports', label: 'My reports' },
+    ];
+  }
+
   const items = [
     { name: 'today', label: 'Today' },
     { name: 'participants', label: 'Participants' },
@@ -47,6 +64,7 @@ const nav = computed(() => {
 
 async function signOut(): Promise<void> {
   // Local records go first, and anything unsent is pushed before they do.
+  // A self-access account has none, so this is a no-op for that role.
   await offline.signOut();
   await session.signOut();
   await router.push({ name: 'sign-in' });
@@ -105,10 +123,16 @@ async function signOut(): Promise<void> {
             {{ item.label }}
           </RouterLink>
           <ThemeToggle />
+          <ContrastToggle />
         </nav>
       </div>
 
-      <div class="mx-auto flex max-w-5xl px-4 pb-1">
+      <!--
+        The sync indicator states what is on the device and what is waiting to
+        go. A self-access account has neither (doc 06 §6), so it would be a
+        light that could only ever mean one thing.
+      -->
+      <div v-if="syncs" class="mx-auto flex max-w-5xl px-4 pb-1">
         <SyncIndicator class="ml-auto" />
       </div>
 

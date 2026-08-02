@@ -219,9 +219,19 @@ describe('diary', () => {
       const staffView = await api(worker, 'get', `/api/v1/participants/${participantId}/diary`);
       expect(staffView.body.entries).toHaveLength(2);
 
-      const selfView = await api(self, 'get', `/api/v1/participants/${participantId}/diary`);
-      expect(selfView.body.entries).toHaveLength(1);
-      expect(selfView.body.entries[0].body).toBe('Visible one.');
+      /*
+       * Since Phase 9 the self-access account does not read the staff diary
+       * route at all: it is refused for that role along with the rest of the
+       * staff surface (D70). Their own entries come from `/me/day`, where the
+       * same shared visibility rule does the filtering.
+       */
+      const refused = await api(self, 'get', `/api/v1/participants/${participantId}/diary`);
+      expect(refused.status).toBe(403);
+
+      const selfView = await api(self, 'get', '/api/v1/me/day');
+      expect(selfView.status).toBe(200);
+      expect(selfView.body.day.diary).toHaveLength(1);
+      expect(selfView.body.day.diary[0].body).toBe('Visible one.');
     });
 
     it('does not let a self-access account write in its own diary', async () => {
