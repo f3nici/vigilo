@@ -1,15 +1,21 @@
 import PDFDocument from 'pdfkit';
 import type { Readable } from 'node:stream';
 import {
+  dayIsEmpty,
   describeIncidentStatus,
+  describeMyCheck,
   describeSeverity,
+  emptyDayMessage,
   formatTimeOfDay,
+  localDateOf,
+  myDayTimeline,
   outstandingActions,
   utcToZoned,
   type DailyDose,
   type DailyReport,
   type DailyWindow,
   type Incident,
+  type MyRecords,
 } from '@vigilo/shared';
 
 /**
@@ -544,6 +550,137 @@ function incidentFooters(
     doc.font(LABEL).fontSize(8).fillColor(MUTED);
     doc.text(
       `Incident ${incident.id.slice(0, 8)} · ${context.participantName} · generated ${generated} by ${context.generatedByName} · page ${index + 1} of ${range.count}`,
+      MARGIN,
+      doc.page.height - MARGIN + 8,
+      { width: doc.page.width - MARGIN * 2, align: 'center', lineBreak: false },
+    );
+  }
+}
+
+/* ------------------------------------------------------------ self-access */
+
+/**
+ * The participant's own record as a PDF (doc 06 §6, doc 07 §5).
+ *
+ * Deliberately a different document from `renderDailyReport`, not that one
+ * with pieces removed. The staff report accounts for every window in the day
+ * including the ones nobody did, because that is what an auditor is reading it
+ * for. This one is a person's record of their own days, so it carries what was
+ * written down and nothing about whether the team kept to the schedule.
+ *
+ * It is also the artefact doc 07 §5 names as how the right of access is
+ * served, which is why it is a document somebody can keep rather than a screen
+ * they have to stay logged in to read.
+ */
+export function renderMyRecords(records: MyRecords): Readable {
+  const doc = new PDFDocument({
+    size: 'A4',
+    margin: MARGIN,
+    bufferPages: true,
+    info: {
+      Title: `My record ${records.from}${records.to === records.from ? '' : ` to ${records.to}`}`,
+      Author: records.orgName,
+      Subject: 'My care record',
+      CreationDate: new Date(records.generatedAt),
+    },
+  });
+
+  const time = (iso: string) =>
+    formatTimeOfDay(utcToZoned(new Date(iso), records.timeZone).minutes);
+  const today = localDateOf(new Date(records.generatedAt), records.timeZone);
+
+  // Larger than the staff report throughout. This is read by the person it is
+  // about, sometimes with a support worker, sometimes at arm's length.
+  doc.font(HEADING).fontSize(20).fillColor(INK).text('My record');
+  doc.moveDown(0.3);
+  doc.font(BODY).fontSize(12).fillColor(INK).text(records.participantName);
+  doc.font(LABEL).fontSize(10).fillColor(MUTED).text(records.orgName);
+  rule(doc);
+  doc.moveDown(0.6);
+
+  for (const day of records.days) {
+    ensureRoom(doc, 90);
+    doc.moveDown(0.4);
+    doc.font(HEADING).fontSize(14).fillColor(INK).text(longDate(day.date, records.timeZone));
+    doc.moveDown(0.3);
+
+    if (dayIsEmpty(day)) {
+      doc.font(BODY_ITALIC).fontSize(11).fillColor(MUTED);
+      doc.text(emptyDayMessage(day.date, today));
+      doc.moveDown(0.6);
+      continue;
+    }
+
+    // One list, oldest first, from the same function the screen orders by.
+    for (const item of myDayTimeline(day)) {
+      ensureRoom(doc, 60);
+      doc.font(BODY_BOLD).fontSize(11).fillColor(INK);
+
+      if (item.kind === 'check') {
+        doc.text(`${time(item.at)}  ${describeMyCheck(item.check)}`);
+
+        doc.font(BODY).fontSize(11).fillColor(INK);
+        for (const value of item.check.values) {
+          doc.text(`${value.label}: ${value.display}`, { indent: 14 });
+        }
+        doc.moveDown(0.5);
+        continue;
+      }
+
+      const entry = item.entry;
+      doc.text(`${time(item.at)}  ${entry.categoryLabel}`);
+
+      doc.font(BODY).fontSize(11).fillColor(INK);
+      doc.text(entry.body, { indent: 14 });
+
+      const notes = [
+        entry.recordedByName === null ? null : `Written by ${entry.recordedByName}`,
+        entry.edited ? 'edited since it was written' : null,
+        // Named rather than printed. A photo does not survive a photocopier,
+        // and the person can open it on the screen this file came from.
+        entry.photos.length > 0
+          ? `${entry.photos.length} ${entry.photos.length === 1 ? 'photo is' : 'photos are'} on this entry`
+          : null,
+      ].filter((one): one is string => one !== null);
+
+      if (notes.length > 0) {
+        doc.font(LABEL).fontSize(9).fillColor(MUTED);
+        doc.text(notes.join(' · '), { indent: 14 });
+      }
+      doc.moveDown(0.5);
+    }
+  }
+
+  myRecordsFooters(doc, records);
+
+  doc.end();
+  return doc as unknown as Readable;
+}
+
+function longDate(date: string, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-AU', {
+    timeZone,
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(`${date}T12:00:00Z`));
+}
+
+function myRecordsFooters(doc: PDFKit.PDFDocument, records: MyRecords): void {
+  const range = doc.bufferedPageRange();
+  const generated = new Intl.DateTimeFormat('en-AU', {
+    timeZone: records.timeZone,
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(records.generatedAt));
+
+  for (let index = 0; index < range.count; index += 1) {
+    doc.switchToPage(range.start + index);
+    doc.font(LABEL).fontSize(8).fillColor(MUTED);
+    // No "generated by": nobody generated this for them, they asked for it.
+    doc.text(
+      `${records.participantName} · ${generated} · page ${index + 1} of ${range.count}`,
       MARGIN,
       doc.page.height - MARGIN + 8,
       { width: doc.page.width - MARGIN * 2, align: 'center', lineBreak: false },

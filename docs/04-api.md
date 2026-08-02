@@ -220,6 +220,29 @@ Every export writes an audit row recording the requester, filters and row count.
 Exports are rate-limited and, over a size threshold, generated as a background
 job the user collects.
 
+### 11.1 Participant self-access
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/me/day?date=` | one day of their own record, defaulting to today in the org timezone |
+| GET | `/me/records?from=&to=` | the same, over a range, up to 31 days |
+| GET | `/me/reports/daily.pdf?from=&to=` | streamed PDF, the artefact doc 07 §5 names |
+
+**No participant id in any of them.** It comes off the principal, so there is
+nothing in a path or a query string for a scope check to get wrong. The
+schemas are strict, so a supplied `participantId` is a 422 rather than
+something the service has to remember to ignore.
+
+These three paths and `/auth/*` are the entire API surface a self-access
+account may reach. Everything else answers `scope_denied`, enforced by one
+allow-list above every router rather than by a guard on each route (D70).
+Sync refuses the role as well: the feed is scoped by participant and not by
+field, so a participant device would pull whole rows including diary entries
+marked not visible (D73).
+
+Every read is audited, because a view of a record is a view (doc 07 §4) and
+because the audit row is the evidence that the right of access was served.
+
 ## 12. Admin
 
 | Method | Path |

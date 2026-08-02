@@ -1,5 +1,6 @@
 import { Router, type Request } from 'express';
 import {
+  canSyncOffline,
   registerDeviceRequestSchema,
   syncChangesQuerySchema,
   syncPushRequestSchema,
@@ -8,7 +9,7 @@ import type { Database } from '../db/client.js';
 import type { KeyRing } from '../crypto/keys.js';
 import { applyOperations, bootstrap, changesSince, type SyncPrincipal } from '../services/sync.js';
 import { getDevice, recordSyncCursor, registerDevice } from '../services/devices.js';
-import { currentPrincipal, requireAuth } from '../middleware/principal.js';
+import { currentPrincipal, requireAuth, requireCapability } from '../middleware/principal.js';
 import { asyncHandler } from '../middleware/async.js';
 
 /**
@@ -34,6 +35,17 @@ export function syncRoutes(db: Database, keyRing: KeyRing): Router {
   const router = Router();
 
   router.use(requireAuth());
+  /*
+   * A self-access account gets nothing on a device. The middleware above every
+   * router already refuses these paths for that role; this says it here as
+   * well, because it is a property of sync rather than of the URL. The feed is
+   * scoped by participant, not by field, so a participant device would pull
+   * whole rows including the diary entries staff marked not visible and the
+   * checks nobody recorded.
+   */
+  router.use(
+    requireCapability(canSyncOffline, 'A self-access account does not keep records on a device.'),
+  );
 
   /**
    * The full scoped snapshot. Called by a new device, after a reinstall, when

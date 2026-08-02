@@ -32,6 +32,8 @@ import {
   medicationAdministrationSchema,
   medicationDoseSchema,
   medicationSchema,
+  myDaySchema,
+  myRecordsSchema,
   loginResponseSchema,
   meResponseSchema,
   readyResponseSchema,
@@ -73,6 +75,8 @@ import {
   type CreateMedicationRequest,
   type Incident,
   type IncidentQuery,
+  type MyDay,
+  type MyRecords,
   type MarkCarePlanReadRequest,
   type PublishCarePlanVersionRequest,
   type ReopenIncidentRequest,
@@ -1405,4 +1409,38 @@ export async function completeIncidentAction(
 
 export function incidentPdfUrl(id: string): string {
   return `/api/v1/incidents/${id}/pdf`;
+}
+
+/* ------------------------------------------------------ participant self-access */
+
+/**
+ * The three self-access calls (doc 06 §6).
+ *
+ * No participant id in any of them. The server reads it off the session, so
+ * there is nothing here for a screen to pass wrongly and nothing a person
+ * could edit in the address bar to reach somebody else's record.
+ */
+export async function getMyDay(date?: string): Promise<{ day: MyDay; today: string }> {
+  const query = date === undefined ? '' : `?date=${date}`;
+  return z
+    .object({
+      day: myDaySchema,
+      today: z.string(),
+      participantName: z.string(),
+      timeZone: z.string(),
+    })
+    .parse(await request(`/v1/me/day${query}`));
+}
+
+export async function getMyRecords(
+  from: string,
+  to: string,
+): Promise<{ records: MyRecords; today: string }> {
+  return z
+    .object({ records: myRecordsSchema, today: z.string() })
+    .parse(await request(`/v1/me/records?from=${from}&to=${to}`));
+}
+
+export function myRecordsPdfUrl(from: string, to: string): string {
+  return `/api/v1/me/reports/daily.pdf?from=${from}&to=${to}`;
 }

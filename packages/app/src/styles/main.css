@@ -78,6 +78,59 @@
   --vigilo-cat-slate: #b0ada6;
 }
 
+/*
+ * High contrast (doc 06 §7).
+ *
+ * A separate axis from light and dark rather than a fourth palette, so it
+ * applies at 2am as well as at noon. Only the tokens that carry text or a
+ * boundary change: text goes to full black or full white, borders stop being
+ * a suggestion, and the state colours darken or lighten until they hold up
+ * against the surface behind them.
+ *
+ * The category colours are not touched. They say what an entry is about, never
+ * how serious it is, and making them shout would turn a filing label into a
+ * severity scale.
+ */
+.contrast {
+  --vigilo-primary: #0a4f4f;
+  --vigilo-primary-hover: #073b3b;
+  --vigilo-primary-subtle: #d3ecea;
+  --vigilo-surface: #ffffff;
+  --vigilo-background: #ffffff;
+  --vigilo-border: #1c1b19;
+  --vigilo-text: #000000;
+  --vigilo-text-secondary: #26241f;
+  --vigilo-text-muted: #3d3a34;
+
+  --vigilo-complete: #1c5e38;
+  --vigilo-partial: #7a4f00;
+  --vigilo-pending: #26241f;
+  --vigilo-missed: #8c2415;
+  --vigilo-not-expected: #3d3a34;
+  --vigilo-late: #55308c;
+  --vigilo-syncing: #0a4f4f;
+}
+
+.contrast.dark {
+  --vigilo-primary: #7fe3df;
+  --vigilo-primary-hover: #a5f0ed;
+  --vigilo-primary-subtle: #0a2b2a;
+  --vigilo-surface: #000000;
+  --vigilo-background: #000000;
+  --vigilo-border: #f2f0eb;
+  --vigilo-text: #ffffff;
+  --vigilo-text-secondary: #e4e1da;
+  --vigilo-text-muted: #c8c5bd;
+
+  --vigilo-complete: #86e0a8;
+  --vigilo-partial: #f2c463;
+  --vigilo-pending: #e4e1da;
+  --vigilo-missed: #ff9c8f;
+  --vigilo-not-expected: #c8c5bd;
+  --vigilo-late: #cfb8ff;
+  --vigilo-syncing: #7fe3df;
+}
+
 @theme inline {
   --color-primary: var(--vigilo-primary);
   --color-primary-hover: var(--vigilo-primary-hover);
@@ -152,6 +205,12 @@
 
   :focus-visible {
     outline: 2px solid var(--vigilo-primary);
+    outline-offset: 2px;
+  }
+
+  /* Keyboard focus has to survive a background it now matches more closely. */
+  .contrast :focus-visible {
+    outline: 3px solid var(--vigilo-text);
     outline-offset: 2px;
   }
 }

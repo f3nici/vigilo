@@ -176,7 +176,7 @@ the compliance numbers match hand-counted windows in a seeded fixture.
 
 ---
 
-## Phase 9: Participant self-access
+## Phase 9: Participant self-access (done)
 
 - Participant role screens: my day, my records, my reports.
 - Visibility filtering enforced server-side.

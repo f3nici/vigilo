@@ -36,11 +36,10 @@ beforeEach(async () => {
 });
 
 describe('out-of-scope access is denied for every role', () => {
-  const cases: { role: Role; grant: 'assignment' | 'team_scope' | 'own_record' | 'none' }[] = [
+  const cases: { role: Role; grant: 'assignment' | 'team_scope' | 'none' }[] = [
     { role: 'worker', grant: 'assignment' },
     { role: 'team_leader', grant: 'team_scope' },
     { role: 'nurse', grant: 'team_scope' },
-    { role: 'participant', grant: 'own_record' },
   ];
 
   for (const { role, grant } of cases) {
@@ -48,10 +47,7 @@ describe('out-of-scope access is denied for every role', () => {
       const inScope = await seedParticipant(h.ownerDb, h.keyRing);
       const outOfScope = await seedParticipant(h.ownerDb, h.keyRing);
 
-      const user = await seedUser(h.ownerDb, h.keyRing, {
-        role,
-        participantId: role === 'participant' ? inScope : null,
-      });
+      const user = await seedUser(h.ownerDb, h.keyRing, { role });
 
       if (grant === 'assignment') await assign(h.ownerDb, user.id, inScope);
       if (grant === 'team_scope') await addTeamScope(h.ownerDb, user.id, inScope);
@@ -71,6 +67,33 @@ describe('out-of-scope access is denied for every role', () => {
       expect(denied.body.error.code).toBe('scope_denied');
     });
   }
+
+  /**
+   * A self-access account is the one role scope alone does not decide.
+   *
+   * It is in scope for its own record, so the staff route would answer 200
+   * about them. Since Phase 9 the role is refused the whole staff surface
+   * (D70) and reads its own record through `/me`, so this is what "in scope"
+   * and "out of scope" mean for a participant.
+   */
+  it('denies a participant every participant record, including their own', async () => {
+    const own = await seedParticipant(h.ownerDb, h.keyRing);
+    const somebodyElse = await seedParticipant(h.ownerDb, h.keyRing);
+
+    const user = await seedUser(h.ownerDb, h.keyRing, { role: 'participant', participantId: own });
+    const { cookies } = await signIn(h, user);
+
+    for (const id of [own, somebodyElse]) {
+      const response = await request(h.app)
+        .get(`/api/v1/participants/${id}`)
+        .set('Cookie', cookies);
+      expect(response.status).toBe(403);
+      expect(response.body.error.code).toBe('scope_denied');
+    }
+
+    const mine = await request(h.app).get('/api/v1/me/day').set('Cookie', cookies);
+    expect(mine.status).toBe(200);
+  });
 
   it('gives an admin every participant', async () => {
     const a = await seedParticipant(h.ownerDb, h.keyRing);

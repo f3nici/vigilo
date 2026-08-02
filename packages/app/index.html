@@ -31,6 +31,12 @@
             stored === 'dark' ||
             (stored !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
           document.documentElement.classList.toggle('dark', dark);
+          // Same reason: a high-contrast user should not see one paint of the
+          // normal palette before the class lands.
+          document.documentElement.classList.toggle(
+            'contrast',
+            localStorage.getItem('vigilo.contrast') === 'high',
+          );
         } catch (e) {
           /* private mode, fall through to the media query */
         }

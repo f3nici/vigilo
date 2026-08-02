@@ -4,7 +4,7 @@ Care records platform for a disability support team. Participant diaries and
 admin-defined observation checks, working offline. Ships as an installable PWA
 first, with native Android and iOS builds as the final phases.
 
-**Status: Phases 0 to 8 done.** Phase 5 was the v1 line and everything since is
+**Status: Phases 0 to 9 done.** Phase 5 was the v1 line and everything since is
 additive. Monorepo, Docker Compose and CI; identity, roles, TOTP, the
 break-glass CLI, the scope resolver, the audit log and the encryption layer;
 participant records with alerts, emergency contacts, emergency plans and
@@ -21,8 +21,11 @@ administration record with materialised doses on the same coverage rules,
 sign-off with notes and witnesses, PRN recording and offline sign-off through
 the existing outbox; and care plans with versions, publishing, read receipts
 and unread markers, plus incidents with the full field set, the status
-workflow, follow-up actions and a PDF.
-**Phase 9 (participant self-access) is next**, in `docs/09-roadmap.md`.
+workflow, follow-up actions and a PDF; and participant self-access: my day, my
+records and my reports, served by purpose-built DTOs behind an allow-list that
+refuses the rest of the API to that role.
+**Phase 10 (production hardening) is next**, in `docs/09-roadmap.md`. It must
+complete before any real participant record is entered.
 
 ## Read before building
 
@@ -146,6 +149,18 @@ service container.
   Nothing anywhere stores or trusts HTML.
 - **Incidents never reach a device** (D67) and are never visible to a
   participant account, refused in the service rather than hidden in the UI.
+- **A self-access account reaches `/auth` and three `/me` paths and nothing
+  else** (D70). The allow-list is `SELF_ACCESS_ALLOWED` in
+  `packages/api/src/middleware/principal.ts`, applied once above every router,
+  so a route added in a later phase is refused for that role by default. A
+  participant is in scope for their own record, so `assertInScope` passes for
+  them everywhere and cannot be what stops this.
+- **Self-access DTOs are built field by field, never filtered from a staff
+  one** (D71), and a participant never sees a missed or pending check (D72).
+- **A self-access account does not sync and holds nothing on a device** (D73).
+  The feed is scoped by participant, not by field, so a pull would carry the
+  diary entries staff marked not visible. Those three screens are the one place
+  in the product where being offline means nothing loads, and they say so.
 - **Medication has no clinical checking and never will.** No interactions, no
   maximum daily totals, no dose validation. A dose is text transcribed off a
   label, and software that does arithmetic on doses is software that can get a
