@@ -91,6 +91,17 @@ self.addEventListener('activate', (event: ExtendableEvent) => {
 
 /* ---------------------------------------------------------------- the push */
 
+/*
+ * Nothing sends to this today (D88). The server half came out with the rest of
+ * notifications, because with no roster there was no way to tell a worker on
+ * shift from one asleep.
+ *
+ * The listeners stay. They are the half that is awkward to get right (reusing
+ * an open window rather than opening a second copy of the app for a worker to
+ * lose an entry in), and leaving them means bringing notifications back is
+ * server-side work plus one platform adapter.
+ */
+
 self.addEventListener('push', (event: PushEvent) => {
   if (!event.data) return;
 

@@ -48,9 +48,7 @@ import {
 import { syncRoutes, deviceRoutes } from './routes/sync.js';
 import { selfAccessRoutes } from './routes/selfaccess.js';
 import { exportRoutes, reportRoutes } from './routes/reports.js';
-import { notificationPreferenceRoutes, pushRoutes } from './routes/push.js';
 import { createFileStore } from './services/storage.js';
-import { vapidKeys } from './services/vapid.js';
 import { errorHandler, notFoundHandler } from './middleware/errors.js';
 import {
   auditActorMiddleware,
@@ -158,7 +156,7 @@ export function createApp(config: Config, logger: Logger, db: Database, keyRing:
   // reason as the checks, the diary and the medications.
   app.use('/api/v1/participants', participantCarePlanRoutes(db, keyRing));
   app.use('/api/v1/care-plans', carePlanRoutes(db, keyRing));
-  app.use('/api/v1/care-plan-versions', carePlanVersionRoutes(db, keyRing, vapidKeys(config)));
+  app.use('/api/v1/care-plan-versions', carePlanVersionRoutes(db, keyRing));
   app.use('/api/v1/participants', participantIncidentRoutes(db, keyRing));
   app.use('/api/v1/incidents', incidentRoutes(db, keyRing));
   app.use('/api/v1/incident-actions', incidentActionRoutes(db, keyRing));
@@ -168,12 +166,10 @@ export function createApp(config: Config, logger: Logger, db: Database, keyRing:
   // participant id anywhere in them: the service reads it off the principal.
   app.use('/api/v1/me', selfAccessRoutes(db, keyRing));
 
-  // Sync and push. Everything they touch already exists; these are the two
-  // surfaces that put it on a phone with no signal (doc 04 §13 and §14).
+  // Sync. Everything it touches already exists; this is the surface that puts
+  // it on a phone with no signal (doc 04 §13).
   app.use('/api/v1/sync', syncRoutes(db, keyRing));
   app.use('/api/v1/devices', deviceRoutes(db));
-  app.use('/api/v1/push', pushRoutes(db, vapidKeys(config)));
-  app.use('/api/v1/me', notificationPreferenceRoutes(db));
 
   // Reports and exports (doc 04 §11). No participant id in these URLs, so
   // scope is resolved inside the services from the caller's own.

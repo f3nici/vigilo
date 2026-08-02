@@ -207,6 +207,40 @@ export async function listVersions(db: Database, templateId: string): Promise<Te
   );
 }
 
+/**
+ * The forms a worker can record on demand right now (D89).
+ *
+ * Every active template that has a published version, as a name and an id.
+ * Not the admin template list: that one carries draft state, version counts,
+ * schedule counts and publication history, none of which helps somebody
+ * choosing what to fill in, and all of which is about managing forms rather
+ * than using one.
+ *
+ * A retired template is left out. It is still bound to every entry recorded
+ * against it, so history reads correctly, but it is not something to start a
+ * new record with.
+ */
+export async function listRecordableForms(
+  db: Database,
+): Promise<{ id: string; name: string; description: string | null }[]> {
+  return db
+    .select({
+      id: checkTemplates.id,
+      name: checkTemplates.name,
+      description: checkTemplates.description,
+    })
+    .from(checkTemplates)
+    .innerJoin(
+      checkTemplateVersions,
+      and(
+        eq(checkTemplateVersions.templateId, checkTemplates.id),
+        eq(checkTemplateVersions.status, 'published'),
+      ),
+    )
+    .where(eq(checkTemplates.status, 'active'))
+    .orderBy(asc(checkTemplates.name));
+}
+
 /** The published version a schedule resolves to when it materialises a window. */
 export async function publishedVersionFor(
   db: Database,

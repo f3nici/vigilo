@@ -699,14 +699,18 @@ export type CheckWindowRow = typeof checkWindows.$inferSelect;
  * The id is a UUID v7 generated on the device, so an entry has stable identity
  * before it reaches the server and a replayed request updates rather than
  * duplicates.
+ *
+ * `window_id` is nullable, for a check somebody recorded on demand rather than
+ * because a schedule asked for one (D89). The same shape PRN medication uses.
+ * An unscheduled entry has no window, no lateness and no place in the
+ * compliance percentage: nothing asked for it, so nothing can say it was late
+ * or missed.
  */
 export const checkEntries = pgTable(
   'check_entries',
   {
     id: uuid('id').primaryKey(),
-    windowId: uuid('window_id')
-      .notNull()
-      .references(() => checkWindows.id, { onDelete: 'cascade' }),
+    windowId: uuid('window_id').references(() => checkWindows.id, { onDelete: 'cascade' }),
     participantId: uuid('participant_id')
       .notNull()
       .references(() => participants.id, { onDelete: 'cascade' }),
@@ -728,7 +732,8 @@ export const checkEntries = pgTable(
     revision: bigint('revision', { mode: 'number' }).notNull().default(0),
   },
   (table) => [
-    unique('check_entries_window_key').on(table.windowId),
+    // Partial, so an unscheduled entry does not collide with every other one.
+    // Declared in migration 0019 because Drizzle cannot express the predicate.
     index('check_entries_participant_idx').on(table.participantId, table.recordedAt),
     index('check_entries_revision_idx').on(table.revision),
   ],
@@ -1420,6 +1425,18 @@ export const syncAppliedOps = pgTable(
   },
   (table) => [index('sync_applied_ops_applied_idx').on(table.appliedAt)],
 );
+
+/**
+ * Push, which nothing currently reads or writes (D88).
+ *
+ * Notifications came out because there is no roster, so there was no honest
+ * way to tell a worker on shift from one asleep and everyone assigned was told
+ * at any hour. The three tables below stay rather than being dropped: nothing
+ * in Vigilo hard-deletes, they hold no participant data, and keeping them means
+ * bringing notifications back is writing a sender rather than a migration.
+ *
+ * If they are still unused when a roster exists, drop them then, deliberately.
+ */
 
 /**
  * Web Push endpoints (doc 04 §14). FCM and APNs tokens land in the same table

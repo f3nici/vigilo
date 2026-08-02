@@ -75,7 +75,7 @@ async function unlockPin(): Promise<void> {
 async function done(): Promise<void> {
   const userId = session.principal?.userId;
   if (userId) await offline.start(userId);
-  await router.replace({ name: 'today' });
+  await router.replace({ name: 'home' });
 }
 
 /**

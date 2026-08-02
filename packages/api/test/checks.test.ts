@@ -392,6 +392,309 @@ describe('checks', () => {
     });
   });
 
+  /* ------------------------------------------- checks nobody scheduled */
+
+  describe('recording a check on demand', () => {
+    /**
+     * D89. Until this existed, the only way to record anything was for an
+     * admin to have scheduled it first, so a worker asked to take a blood
+     * pressure had nowhere to put it.
+     */
+    function goodValues() {
+      return [
+        { fieldKey: 'urine_output', number: 350 },
+        { fieldKey: 'vent_mode', json: 'cpap' },
+      ];
+    }
+
+    it('lists the published forms a worker can fill in', async () => {
+      const { admin, participantId } = await setUp();
+
+      const response = await api(
+        admin,
+        'get',
+        `/api/v1/participants/${participantId}/recordable-forms`,
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body.forms).toHaveLength(1);
+      // A name and an id, not the admin template list: draft state, version
+      // counts and schedule counts are about managing forms, not using one.
+      expect(Object.keys(response.body.forms[0]).sort()).toEqual(['description', 'id', 'name']);
+    });
+
+    it('leaves out a form that was never published', async () => {
+      const { admin, participantId } = await setUp();
+      await api(admin, 'post', '/api/v1/check-templates').send({ name: 'Weight check' });
+
+      const response = await api(
+        admin,
+        'get',
+        `/api/v1/participants/${participantId}/recordable-forms`,
+      );
+      expect(response.body.forms.map((form: { name: string }) => form.name)).toEqual([
+        'Vent observations',
+      ]);
+    });
+
+    it('records one with no window at all', async () => {
+      const { admin, participantId, templateId } = await setUp();
+
+      const response = await api(
+        admin,
+        'post',
+        `/api/v1/participants/${participantId}/checks`,
+      ).send({
+        entryId: randomUUID(),
+        templateId,
+        recordedAt: new Date().toISOString(),
+        values: goodValues(),
+      });
+
+      expect(response.status).toBe(201);
+      expect(response.body.entry.windowId).toBeNull();
+      expect(response.body.entry.status).toBe('complete');
+      // Nothing asked for it, so there is nothing for it to be late for.
+      expect(response.body.entry.isLate).toBe(false);
+    });
+
+    it('binds it to the published version, whatever the device thought', async () => {
+      const { admin, participantId, templateId, versionId } = await setUp();
+
+      const response = await api(
+        admin,
+        'post',
+        `/api/v1/participants/${participantId}/checks`,
+      ).send({
+        entryId: randomUUID(),
+        templateId,
+        recordedAt: new Date().toISOString(),
+        values: goodValues(),
+      });
+
+      expect(response.body.entry.templateVersionId).toBe(versionId);
+    });
+
+    it('is idempotent, so a replayed outbox row does not record it twice', async () => {
+      const { admin, participantId, templateId } = await setUp();
+      const entryId = randomUUID();
+      const body = {
+        entryId,
+        templateId,
+        recordedAt: new Date().toISOString(),
+        values: goodValues(),
+      };
+
+      await api(admin, 'post', `/api/v1/participants/${participantId}/checks`).send(body);
+      const again = await api(admin, 'post', `/api/v1/participants/${participantId}/checks`).send(
+        body,
+      );
+
+      expect(again.status).toBe(201);
+      expect(again.body.entry.id).toBe(entryId);
+
+      const [{ count }] = await h.ownerDb.execute(
+        sql`select count(*)::int as count from check_entries where window_id is null`,
+      );
+      expect(count).toBe(1);
+    });
+
+    it('refuses a form that has never been published', async () => {
+      const { admin, participantId } = await setUp();
+      const unpublished = await api(admin, 'post', '/api/v1/check-templates').send({
+        name: 'Weight check',
+      });
+
+      const response = await api(
+        admin,
+        'post',
+        `/api/v1/participants/${participantId}/checks`,
+      ).send({
+        entryId: randomUUID(),
+        templateId: unpublished.body.template.id,
+        recordedAt: new Date().toISOString(),
+        values: [],
+      });
+
+      expect(response.status).toBe(409);
+      expect(response.body.error.message).toContain('not been published');
+    });
+
+    it('refuses a time that has not happened yet', async () => {
+      // A check recorded in the future would sit at the top of a day that has
+      // not happened.
+      const { admin, participantId, templateId } = await setUp();
+
+      const response = await api(
+        admin,
+        'post',
+        `/api/v1/participants/${participantId}/checks`,
+      ).send({
+        entryId: randomUUID(),
+        templateId,
+        recordedAt: new Date(Date.now() + 3_600_000).toISOString(),
+        values: goodValues(),
+      });
+
+      expect(response.status).toBe(422);
+      expect(response.body.error.message).toContain('has not happened yet');
+    });
+
+    it('validates values exactly as a scheduled check does', async () => {
+      const { admin, participantId, templateId } = await setUp();
+
+      const response = await api(
+        admin,
+        'post',
+        `/api/v1/participants/${participantId}/checks`,
+      ).send({
+        entryId: randomUUID(),
+        templateId,
+        recordedAt: new Date().toISOString(),
+        values: [{ fieldKey: 'urine_output', number: 9000 }],
+      });
+
+      expect(response.status).toBe(422);
+      expect(response.body.error.message).toContain('cannot be above');
+    });
+
+    it('needs a team leader to write one up from days ago', async () => {
+      const { admin, participantId, templateId } = await setUp();
+      const workerUser = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
+      await assign(h.ownerDb, workerUser.id, participantId);
+      const worker = await signIn(h, workerUser);
+
+      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3_600_000).toISOString();
+      const body = {
+        entryId: randomUUID(),
+        templateId,
+        recordedAt: threeDaysAgo,
+        values: goodValues(),
+      };
+
+      const refused = await api(
+        worker,
+        'post',
+        `/api/v1/participants/${participantId}/checks`,
+      ).send(body);
+      expect(refused.status).toBe(409);
+
+      // The same record, by somebody who may back-fill.
+      const allowed = await api(admin, 'post', `/api/v1/participants/${participantId}/checks`).send(
+        {
+          ...body,
+          entryId: randomUUID(),
+        },
+      );
+      expect(allowed.status).toBe(201);
+    });
+
+    it('keeps it out of the compliance percentage, and counts it beside', async () => {
+      /*
+       * The number somebody will be asked to defend. Counting these as
+       * completed would either push it above 100% or hide a missed scheduled
+       * check behind an unscheduled one.
+       */
+      const fixture = await setUp();
+      const { admin, participantId, templateId } = fixture;
+
+      for (let i = 0; i < 3; i += 1) {
+        await api(admin, 'post', `/api/v1/participants/${participantId}/checks`).send({
+          entryId: randomUUID(),
+          templateId,
+          recordedAt: new Date().toISOString(),
+          values: goodValues(),
+        });
+      }
+
+      const report = await api(
+        admin,
+        'get',
+        `/api/v1/reports/compliance?from=${today()}&to=${today()}`,
+      );
+
+      expect(report.body.report.total.unscheduled).toBe(3);
+      expect(report.body.report.total.expected).toBe(0);
+      expect(report.body.report.total.completed).toBe(0);
+      expect(report.body.report.totalPercent).toBeNull();
+    });
+
+    it('shows on the daily report, under its own heading', async () => {
+      const { admin, participantId, templateId } = await setUp();
+
+      await api(admin, 'post', `/api/v1/participants/${participantId}/checks`).send({
+        entryId: randomUUID(),
+        templateId,
+        recordedAt: new Date().toISOString(),
+        values: goodValues(),
+      });
+
+      const report = await api(
+        admin,
+        'get',
+        `/api/v1/reports/daily?participantId=${participantId}&date=${today()}`,
+      );
+
+      const day = report.body.report.days[0];
+      expect(day.unscheduled).toHaveLength(1);
+      expect(day.unscheduled[0].templateName).toBe('Vent observations');
+      // Rendered through the same formatter a scheduled check uses, so the
+      // same reading never reads differently depending on who asked for it.
+      expect(day.unscheduled[0].values).toContainEqual({
+        fieldKey: 'urine_output',
+        label: 'Urine output',
+        display: '350 ml',
+      });
+      // And never in the windows array, which is what compliance counts.
+      expect(day.windows.every((one: { id: string }) => one.id !== day.unscheduled[0].id)).toBe(
+        true,
+      );
+    });
+
+    it('refuses a self-access account outright', async () => {
+      const { participantId, templateId } = await setUp();
+      const selfUser = await seedUser(h.ownerDb, h.keyRing, { role: 'participant', participantId });
+      const self = await signIn(h, selfUser);
+
+      const response = await api(self, 'post', `/api/v1/participants/${participantId}/checks`).send(
+        {
+          entryId: randomUUID(),
+          templateId,
+          recordedAt: new Date().toISOString(),
+          values: goodValues(),
+        },
+      );
+
+      expect(response.status).toBe(403);
+    });
+
+    it('refuses a participant somebody is not assigned to', async () => {
+      const { admin, templateId } = await setUp();
+      const other = await api(admin, 'post', '/api/v1/participants').send({
+        firstName: 'Bob',
+        lastName: 'Jones',
+        dateOfBirth: '1990-01-01',
+        ndisNumber: '431234568',
+      });
+
+      const workerUser = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
+      const worker = await signIn(h, workerUser);
+
+      const response = await api(
+        worker,
+        'post',
+        `/api/v1/participants/${other.body.participant.id}/checks`,
+      ).send({
+        entryId: randomUUID(),
+        templateId,
+        recordedAt: new Date().toISOString(),
+        values: goodValues(),
+      });
+
+      expect(response.status).toBe(403);
+    });
+  });
+
   describe('changing a schedule', () => {
     async function scheduled(): Promise<Fixture & { scheduleId: string }> {
       const fixture = await setUp();

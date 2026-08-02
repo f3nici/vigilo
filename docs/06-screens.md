@@ -321,6 +321,12 @@ performance rather than the participant's care.
   high-contrast mode. Staff use this in dim rooms, sometimes with gloves.
 - **No infinite scroll on clinical history.** Explicit date ranges, so a person
   can state what period they looked at.
+- **A worker's home is the participant list** (D90). Each row carries what that
+  person still needs, and a check owing a reason is named on the row. Today is
+  the across-everyone view and belongs to admins, team leaders and nurses.
+  Opening a participant leads with what to do now: anything owing a reason,
+  anything open, then Record a check, Write in the diary and Medication. The
+  record is underneath.
 - **A primary action is never greyed out for missing input** (D78). The button
   works. Pressing it with something missing highlights the field, says what is
   needed in one sentence, and moves focus there. Only a request in flight

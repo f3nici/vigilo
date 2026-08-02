@@ -12,7 +12,6 @@ describe('getPlatform', () => {
     expect(platform.name).toBe('web');
     expect(platform.storage).toBeDefined();
     expect(platform.secureStore).toBeDefined();
-    expect(platform.push).toBeDefined();
   });
 });
 
@@ -64,19 +63,6 @@ describe('WebSecureStore', () => {
   it('is not unlocked before anybody has unlocked it', () => {
     expect(getPlatform().secureStore.isUnlocked()).toBe(false);
     expect(getPlatform().secureStore.method()).toBeNull();
-  });
-});
-
-describe('WebPush', () => {
-  it('reports unsupported without a service worker and PushManager', () => {
-    expect(getPlatform().push.isSupported()).toBe(false);
-    expect(getPlatform().push.permission()).toBe('unsupported');
-  });
-
-  it('returns null rather than throwing when there is nothing to subscribe to', async () => {
-    // No support, no permission and no VAPID key are all ordinary states, and
-    // none of them should stop a worker recording a check.
-    await expect(getPlatform().push.subscribe('a-key')).resolves.toBeNull();
   });
 });
 

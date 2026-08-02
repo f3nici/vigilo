@@ -16,6 +16,8 @@ import {
   type MissReason,
   type PutEntryRequest,
   type PutMissReasonRequest,
+  recordedInTheFuture,
+  type RecordUnscheduledCheckRequest,
   type Role,
   type TemplateSchema,
 } from '@vigilo/shared';
@@ -35,7 +37,7 @@ import {
 } from '../db/schema.js';
 import type { KeyRing } from '../crypto/keys.js';
 import { decryptField, decryptOptional, encryptField, encryptOptional } from '../crypto/fields.js';
-import { parseSchema } from './templates.js';
+import { parseSchema, publishedVersionFor } from './templates.js';
 import {
   MISS_NOTE_COLUMN,
   VALUE_TEXT_COLUMN,
@@ -338,6 +340,183 @@ export async function putEntry(
   return { entry: await toCheckEntry(db, keyRing, entry), window: updatedWindow };
 }
 
+/* -------------------------------------------------- unscheduled checks */
+
+/**
+ * Recording a check nobody scheduled (D89).
+ *
+ * The gap this fills: until now every entry hung off a materialised window, so
+ * the only way to record anything at all was for an admin to have put it on a
+ * grid first. A worker who is asked to take a blood pressure had nowhere to put
+ * it.
+ *
+ * Deliberately a separate function rather than `putEntry` with a null window.
+ * Half of `putEntry` is about the window: the version has to match the one the
+ * window was bound to, the back-fill cutoff is measured from when the window
+ * closed, lateness comes from its end, and the window's status is recomputed
+ * afterwards. None of that means anything here, and threading a null through
+ * all of it would leave the reader working out which branches still apply.
+ *
+ * What it keeps is the part that matters: the same validation, the same
+ * encryption, the same idempotency by device-generated id, and the same audit
+ * row.
+ */
+export async function recordUnscheduledCheck(
+  db: Database,
+  keyRing: KeyRing,
+  participantId: string,
+  request: RecordUnscheduledCheckRequest,
+  principal: EntryPrincipal,
+  actor: AuditActor,
+  options: PutEntryOptions = {},
+): Promise<CheckEntry> {
+  const now = new Date();
+  const recordedAt = new Date(request.recordedAt);
+
+  if (recordedInTheFuture(recordedAt, now)) {
+    throw new HttpError('validation_failed', 'That time has not happened yet.');
+  }
+
+  /*
+   * The form is resolved to its published version here rather than sent by the
+   * device, because the worker picked a form and the question of which version
+   * is current is the server's. A device holding a stale list cannot bind an
+   * entry to a version that is no longer published.
+   */
+  const version = await publishedVersionFor(db, request.templateId);
+  if (!version) {
+    throw new HttpError(
+      'conflict',
+      'That check form has not been published, so there is nothing to record against.',
+    );
+  }
+
+  const schema = parseSchema(version);
+  const problems = validateValues(schema, request.values);
+  if (problems.length > 0) {
+    throw new HttpError('validation_failed', problems[0]!.message, { problems });
+  }
+
+  const [existing] = await db
+    .select()
+    .from(checkEntries)
+    .where(eq(checkEntries.id, request.entryId))
+    .limit(1);
+
+  if (existing && existing.participantId !== participantId) {
+    throw new HttpError('conflict', 'That record belongs to somebody else.');
+  }
+
+  /*
+   * The same back-fill rule scheduled checks have (doc 01 §5.5, A6), measured
+   * from when the check is said to have happened rather than from a window end
+   * there is none of. Somebody writing up yesterday afternoon still needs a
+   * team leader, because a retrospective record is a retrospective record
+   * whether or not anybody asked for it.
+   */
+  const org = await getOrgSettings(db);
+  const backfillAt = options.recordedOffline ? recordedAt : now;
+  const behindBy = Math.round((backfillAt.getTime() - recordedAt.getTime()) / 60_000);
+  if (
+    !existing &&
+    behindBy > org.lateEntryCutoffMinutes &&
+    !canBackfillPastCutoff(principal.role)
+  ) {
+    const hours = Math.round(org.lateEntryCutoffMinutes / 60);
+    throw new HttpError(
+      'conflict',
+      `That was more than ${hours} hours ago. A team leader or nurse can still record it.`,
+    );
+  }
+
+  const entry = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(checkEntries)
+      .values({
+        id: request.entryId,
+        // The whole point: no window, because nothing asked for this.
+        windowId: null,
+        participantId,
+        templateVersionId: version.id,
+        recordedBy: principal.userId,
+        recordedAt,
+        receivedAt: now,
+        status: 'partial',
+        // Nothing to be late for.
+        isLate: false,
+        deviceId: principal.deviceId,
+      })
+      .onConflictDoUpdate({
+        target: checkEntries.id,
+        set: { recordedAt, updatedAt: now },
+      })
+      .returning();
+
+    for (const value of request.values) {
+      const columns = valueColumns(keyRing, schema, value);
+      await tx
+        .insert(checkEntryValues)
+        .values({
+          entryId: row!.id,
+          fieldKey: value.fieldKey,
+          ...columns,
+          recordedAt: value.recordedAt ? new Date(value.recordedAt) : now,
+          recordedBy: principal.userId,
+        })
+        .onConflictDoUpdate({
+          target: [checkEntryValues.entryId, checkEntryValues.fieldKey],
+          set: {
+            ...columns,
+            recordedAt: value.recordedAt ? new Date(value.recordedAt) : now,
+            recordedBy: principal.userId,
+            updatedAt: now,
+          },
+        });
+    }
+
+    const stored = await tx
+      .select()
+      .from(checkEntryValues)
+      .where(eq(checkEntryValues.entryId, row!.id));
+
+    const asValues: CheckValue[] = stored.map((value) => ({
+      fieldKey: value.fieldKey,
+      number: value.valueNumber === null ? null : Number(value.valueNumber),
+      bool: value.valueBool,
+      text: value.valueTextEnc === null ? null : 'set',
+      json: (value.valueJson ?? null) as string | string[] | null,
+    }));
+
+    const [updated] = await tx
+      .update(checkEntries)
+      .set({
+        status: isEntryComplete(schema, asValues) ? 'complete' : 'partial',
+        updatedAt: now,
+      })
+      .where(eq(checkEntries.id, row!.id))
+      .returning();
+
+    return updated!;
+  });
+
+  await recordAudit(db, {
+    action: existing ? 'check_entry.update' : 'check_entry.record_unscheduled',
+    actor,
+    entityType: 'check_entry',
+    entityId: entry.id,
+    participantId,
+    // Which fields were written and against which form. Never the values.
+    metadata: {
+      fields: request.values.map((value) => value.fieldKey).sort(),
+      status: entry.status,
+      templateVersionId: version.id,
+      scheduled: false,
+    },
+  });
+
+  return toCheckEntry(db, keyRing, entry);
+}
+
 /**
  * An edit after submission (doc 01 §5.5).
  *
@@ -352,7 +531,7 @@ export async function editEntry(
   request: EditEntryRequest,
   principal: EntryPrincipal,
   actor: AuditActor,
-): Promise<{ entry: CheckEntry; window: CheckWindowRow }> {
+): Promise<{ entry: CheckEntry; window: CheckWindowRow | null }> {
   const now = new Date();
 
   const [entry] = await db.select().from(checkEntries).where(eq(checkEntries.id, entryId)).limit(1);
@@ -442,7 +621,12 @@ export async function editEntry(
       .where(eq(checkEntries.id, entryId));
   });
 
-  const window = await recomputeWindowStatus(db, entry.windowId, now);
+  /*
+   * An unscheduled entry has no window whose status could change (D89). It was
+   * never pending, can never be missed, and nothing is waiting on it.
+   */
+  const window =
+    entry.windowId === null ? null : await recomputeWindowStatus(db, entry.windowId, now);
 
   if (changedKeys.length > 0) {
     await recordAudit(db, {

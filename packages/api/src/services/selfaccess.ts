@@ -18,7 +18,7 @@ import { getOrgSettings } from './org.js';
 import { findParticipant, toSummary } from './participants.js';
 import { listWindows } from './windows.js';
 import { listDiaryEntries } from './diary.js';
-import { entryDetails } from './reports.js';
+import { entryDetails, unscheduledEntries } from './reports.js';
 
 /**
  * Participant self-access (doc 01 §3.5, doc 04 §11, doc 06 §6).
@@ -123,6 +123,22 @@ export async function myRecords(
   );
 
   /*
+   * Checks recorded on demand (D89). A blood pressure somebody asked for is as
+   * much part of this person's record as one a schedule asked for, and leaving
+   * it out would mean their copy quietly disagreed with the daily report.
+   *
+   * D72 does not apply here: it keeps missed and pending checks out, and an
+   * unscheduled check is neither. It exists because somebody recorded it.
+   */
+  const unscheduled = await unscheduledEntries(
+    db,
+    keyRing,
+    participantId,
+    zonedTimeToUtc(query.from, 0, org.timezone),
+    zonedTimeToUtc(addDays(query.to, 1), 0, org.timezone),
+  );
+
+  /*
    * `listDiaryEntries` applies `canReadDiaryEntry`, which drops entries staff
    * marked not visible and entries that have been deleted. That rule lives in
    * shared and is the same one the staff screens use from the other side, so
@@ -144,7 +160,7 @@ export async function myRecords(
 
   const days: MyDay[] = [];
   for (let date = query.from; date <= query.to; date = addDays(date, 1)) {
-    const checks: MyCheck[] = recorded
+    const scheduled: MyCheck[] = recorded
       .filter((window) => localDateOf(new Date(window.startsAt), org.timezone) === date)
       .map((window) => {
         const detail = details.get(window.entryId!);
@@ -155,7 +171,24 @@ export async function myRecords(
           recordedByName: detail?.recordedByName ?? null,
           values: detail?.values ?? [],
         };
-      })
+      });
+
+    const onDemand: MyCheck[] = unscheduled
+      .filter((check) => localDateOf(new Date(check.recordedAt), org.timezone) === date)
+      .map((check) => ({
+        id: check.id,
+        recordedAt: check.recordedAt,
+        templateName: check.templateName,
+        recordedByName: check.recordedByName,
+        values: check.values,
+      }));
+
+    /*
+     * One list, not two. The person reading this has no reason to care whether
+     * a schedule asked for a reading or somebody decided to take one, and the
+     * shape carries nothing that would tell them apart.
+     */
+    const checks: MyCheck[] = [...scheduled, ...onDemand]
       // Oldest first: a person reads their own day forwards.
       .sort((a, b) => Date.parse(a.recordedAt) - Date.parse(b.recordedAt));
 

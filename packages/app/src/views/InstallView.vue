@@ -7,14 +7,13 @@ import FormError from '@/components/FormError.vue';
 import { isInstalled } from '@/platform';
 import { useSessionStore } from '@/stores/session';
 import { useOfflineStore } from '@/stores/offline';
-import * as api from '@/api/client';
 
 /**
  * Install (doc 06 §2.1).
  *
  * Not a dismissible nag. Without installing, a field worker has no reliable
- * offline storage and, on iOS, no notifications at all, which means the app
- * cannot do the job it exists for. An admin at a desk can skip it for good.
+ * offline storage, which means the app cannot do the job it exists for. An
+ * admin at a desk can skip it for good.
  *
  * Android and desktop Chromium get one tap through `beforeinstallprompt`. iOS
  * has no install API and never has, so it gets the Share-menu instructions,
@@ -26,7 +25,7 @@ const offline = useOfflineStore();
 
 const error = ref('');
 const busy = ref(false);
-const step = ref<'install' | 'unlock' | 'notifications' | 'done'>('install');
+const step = ref<'install' | 'unlock' | 'done'>('install');
 const pin = ref('');
 const pinAgain = ref('');
 const biometricOffered = ref(false);
@@ -99,7 +98,7 @@ async function setUpBiometric(): Promise<void> {
       biometricOffered.value = false;
       return;
     }
-    step.value = 'notifications';
+    step.value = 'done';
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'That did not work.';
   } finally {
@@ -123,19 +122,6 @@ async function setUpPin(): Promise<void> {
     await offline.enrolPin(pin.value);
     pin.value = '';
     pinAgain.value = '';
-    step.value = 'notifications';
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function enableNotifications(): Promise<void> {
-  error.value = '';
-  busy.value = true;
-  try {
-    await api.getVapidKey();
-    step.value = 'done';
-  } catch {
     step.value = 'done';
   } finally {
     busy.value = false;
@@ -144,11 +130,11 @@ async function enableNotifications(): Promise<void> {
 
 async function finish(): Promise<void> {
   await requestPersistence();
-  await router.push({ name: 'today' });
+  await router.push({ name: 'home' });
 }
 
 function later(): void {
-  void router.push({ name: 'today' });
+  void router.push({ name: 'home' });
 }
 </script>
 
@@ -188,8 +174,8 @@ function later(): void {
           </li>
         </ol>
         <p class="text-text-secondary text-sm">
-          Notifications only work once Vigilo is on the home screen. That is a Safari rule, not
-          ours.
+          Reliable offline storage only works once Vigilo is on the home screen. That is a Safari
+          rule, not ours.
         </p>
       </div>
 
@@ -283,25 +269,6 @@ function later(): void {
           Set PIN
         </button>
       </div>
-    </div>
-
-    <div v-else-if="step === 'notifications'" class="card space-y-4 p-4">
-      <h2 class="text-lg font-semibold">Reminders</h2>
-      <p class="text-text-secondary">
-        Vigilo can tell you when a check is due, when one is about to close, and when one has been
-        missed. Notifications never contain anything about a person beyond an initial and surname.
-      </p>
-      <button
-        type="button"
-        class="btn btn-primary w-full"
-        :disabled="busy"
-        @click="enableNotifications"
-      >
-        Turn on reminders
-      </button>
-      <button type="button" class="text-text-secondary min-h-11 underline" @click="step = 'done'">
-        Not now
-      </button>
     </div>
 
     <div v-else class="card space-y-4 p-4">

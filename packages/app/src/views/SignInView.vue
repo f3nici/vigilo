@@ -39,7 +39,7 @@ async function finish(): Promise<void> {
   }
 
   const redirect = route.query.redirect;
-  await router.push(typeof redirect === 'string' ? redirect : { name: 'today' });
+  await router.push(typeof redirect === 'string' ? redirect : { name: 'home' });
 }
 
 async function submitCredentials(): Promise<void> {

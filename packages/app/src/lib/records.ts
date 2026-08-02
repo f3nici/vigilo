@@ -19,6 +19,7 @@ import {
   type PutEntryRequest,
   type PutMissReasonRequest,
   type RecordPrnRequest,
+  type RecordUnscheduledCheckRequest,
   type SignOffRequest,
   type TemplateSchema,
   type WindowDetail,
@@ -534,6 +535,39 @@ export async function recordPrn(input: {
   await store().enqueue({
     opId: uuidv7(),
     kind: 'medication.prn',
+    participantId: input.participantId,
+    payload: input.request,
+  });
+
+  return { queued: true };
+}
+
+/**
+ * A check nobody scheduled (D89).
+ *
+ * Queued rather than sent, like every other write, so a worker in a house with
+ * no signal can still record the blood pressure they were asked to take.
+ *
+ * Unlike a scheduled check there is no local row to update alongside the
+ * outbox entry: an unscheduled check has no window on this device to attach
+ * itself to, and inventing a local one would put a check on the Today list
+ * that nobody asked for. It appears on the record when the outbox drains and
+ * the next pull brings it back, which is the same path a PRN dose takes.
+ */
+export async function recordUnscheduledCheck(input: {
+  participantId: string;
+  request: RecordUnscheduledCheckRequest;
+}): Promise<{ queued: boolean }> {
+  const db = local();
+
+  if (!db) {
+    await api.recordUnscheduledCheck(input.participantId, input.request);
+    return { queued: false };
+  }
+
+  await store().enqueue({
+    opId: uuidv7(),
+    kind: 'check.unscheduled',
     participantId: input.participantId,
     payload: input.request,
   });

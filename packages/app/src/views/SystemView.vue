@@ -19,7 +19,6 @@ const capabilities = ref({
   durableStorage: false,
   storagePersisted: false,
   biometricUnlock: false,
-  push: 'unsupported' as string,
 });
 
 onMounted(async () => {
@@ -36,7 +35,6 @@ onMounted(async () => {
     durableStorage: platform.storage.isAvailable(),
     storagePersisted: await platform.storage.isPersisted(),
     biometricUnlock: await platform.secureStore.isAvailable(),
-    push: platform.push.permission(),
   };
 });
 
@@ -108,10 +106,6 @@ function yesNo(value: boolean): string {
         <div class="flex justify-between gap-4">
           <dt class="text-text-secondary">Biometric unlock</dt>
           <dd>{{ yesNo(capabilities.biometricUnlock) }}</dd>
-        </div>
-        <div class="flex justify-between gap-4">
-          <dt class="text-text-secondary">Push notifications</dt>
-          <dd>{{ capabilities.push }}</dd>
         </div>
       </dl>
     </section>

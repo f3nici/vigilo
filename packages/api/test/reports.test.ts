@@ -229,6 +229,7 @@ describe('reports', () => {
         missedWithReason: 3,
         missedWithoutReason: 2,
         notExpected: 4,
+        unscheduled: 0,
       });
       expect(response.body.report.totalPercent).toBe(69);
     });

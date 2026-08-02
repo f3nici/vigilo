@@ -185,6 +185,12 @@ and it never reaches a report, an export or the participant's own record,
 because it is not something anybody recorded. A form made only of guidance is
 refused.
 
+**A check can be recorded without being scheduled** (D89). A worker opens a
+participant, picks a published form and records it there and then. It carries
+no window, so no lateness and no status, and it sits outside the compliance
+percentage in both directions with a count of its own beside it. Nothing asked
+for it, so it can be neither a check done on time nor one that was missed.
+
 **No normal ranges.** Explicitly out of scope. Vigilo records values, it does
 not judge them. No thresholds, no colour-coding by value, no clinical alerting.
 

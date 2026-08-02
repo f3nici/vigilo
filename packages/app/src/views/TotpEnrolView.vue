@@ -55,7 +55,7 @@ async function confirm(): Promise<void> {
   try {
     await api.confirmTotpEnrolment(code.value);
     await session.refresh();
-    await router.push({ name: 'today' });
+    await router.push({ name: 'home' });
   } catch (err) {
     error.value =
       err instanceof ApiRequestError ? err.message : 'Could not confirm that code. Try again.';

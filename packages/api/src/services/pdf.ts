@@ -13,6 +13,7 @@ import {
   utcToZoned,
   type DailyDose,
   type DailyReport,
+  type DailyUnscheduledCheck,
   type DailyWindow,
   type Incident,
   type MyRecords,
@@ -69,7 +70,12 @@ export function renderDailyReport(report: DailyReport): Readable {
     ensureRoom(doc, 90);
     dayHeading(doc, day.date, report);
 
-    if (day.windows.length === 0 && day.diary.length === 0 && day.medications.length === 0) {
+    if (
+      day.windows.length === 0 &&
+      day.unscheduled.length === 0 &&
+      day.diary.length === 0 &&
+      day.medications.length === 0
+    ) {
       doc.font(BODY_ITALIC).fontSize(10).fillColor(MUTED);
       doc.text('Nothing was scheduled and nothing was recorded.');
       doc.moveDown(0.8);
@@ -79,6 +85,24 @@ export function renderDailyReport(report: DailyReport): Readable {
     for (const window of day.windows) {
       ensureRoom(doc, 60);
       windowBlock(doc, window, time);
+    }
+
+    /*
+     * Checks recorded on demand (D89), under their own heading. Kept apart from
+     * the scheduled ones because the summary below counts one and not the
+     * other, and a reader comparing the two has to be able to see which is
+     * which.
+     */
+    if (day.unscheduled.length > 0) {
+      ensureRoom(doc, 50);
+      doc.moveDown(0.3);
+      doc.font(HEADING).fontSize(10).fillColor(INK).text('Recorded when needed');
+      doc.moveDown(0.2);
+
+      for (const check of day.unscheduled) {
+        ensureRoom(doc, 44);
+        unscheduledBlock(doc, check, time);
+      }
     }
 
     if (day.medications.length > 0) {
@@ -193,6 +217,43 @@ function dayHeading(doc: PDFKit.PDFDocument, date: string, report: DailyReport):
   doc.moveDown(0.4);
   doc.font(HEADING).fontSize(12).fillColor(INK).text(weekday);
   doc.moveDown(0.3);
+}
+
+/**
+ * A check somebody recorded on demand (D89).
+ *
+ * No span, because nothing asked for it at a particular time, and no status,
+ * because there was nothing to be on time for. The time it was recorded is the
+ * only time there is.
+ */
+function unscheduledBlock(
+  doc: PDFKit.PDFDocument,
+  check: DailyUnscheduledCheck,
+  time: (iso: string) => string,
+): void {
+  doc.font(BODY_BOLD).fontSize(10).fillColor(INK);
+  doc.text(`${time(check.recordedAt)}   ${check.templateName}`);
+
+  if (check.values.length > 0) {
+    doc.font(BODY).fontSize(10).fillColor(INK);
+    for (const value of check.values) {
+      doc.text(`${value.label}: ${value.display}`, { indent: 12 });
+    }
+  }
+
+  const notes = [
+    check.recordedByName ? `Recorded by ${check.recordedByName}` : null,
+    check.editCount > 0
+      ? `edited ${check.editCount === 1 ? 'once' : `${check.editCount} times`}`
+      : null,
+  ].filter((one): one is string => one !== null);
+
+  if (notes.length > 0) {
+    doc.font(LABEL).fontSize(8).fillColor(MUTED);
+    doc.text(notes.join(' · '), { indent: 12 });
+  }
+
+  doc.moveDown(0.5);
 }
 
 function windowBlock(
@@ -317,6 +378,12 @@ function summary(doc: PDFKit.PDFDocument, report: DailyReport): void {
     ['Missed with no reason', String(total.missedWithoutReason)],
     ['Not scheduled', String(total.notExpected)],
   ];
+
+  // Outside the figures above, and said so. Nothing asked for these, so they
+  // are neither a check done on time nor one that was missed (D89).
+  if (total.unscheduled > 0) {
+    rows.push(['Recorded when needed, not scheduled', String(total.unscheduled)]);
+  }
 
   const { doseTotal } = report;
   if (doseTotal.expected > 0 || doseTotal.notExpected > 0) {

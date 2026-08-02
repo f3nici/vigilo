@@ -129,8 +129,11 @@ The riskiest phase. Budget for it. This is what puts the app in workers' hands.
 - Sync status indicator with outbox depth and age.
 - Background Sync where available, foreground sync everywhere as the primary
   path.
-- Web Push with VAPID: overdue warnings, close notifications, escalations, deep
-  links.
+- ~~Web Push with VAPID: overdue warnings, close notifications, escalations,
+  deep links.~~ **Removed before production (D88.)** With no roster there was
+  no honest way to tell a worker on shift from one asleep, so everyone assigned
+  was told at any hour. The service worker keeps its listeners; the sending side
+  is gone until there is something to aim it with.
 - Service worker update handling that never interrupts an entry in progress.
 - **Every test in doc 05 §9**, including the 48-hour airplane-mode scenario and
   the PWA lifecycle tests.
@@ -138,10 +141,10 @@ The riskiest phase. Budget for it. This is what puts the app in workers' hands.
 **Done when:** the PWA is installed on a real Android phone and a real iPhone
 (Safari 17+), records 24 windows across two days in airplane mode with a scope
 revocation midway, reconnects, and every record lands exactly once with the
-revoked participant's local data gone. Push notifications arrive on both.
+revoked participant's local data gone.
 
 **This is the v1 line.** Web plus installed PWA, auth, participants, checks,
-diary, offline sync, push. Everything after this is additive.
+diary, offline sync. Everything after this is additive.
 
 ---
 
