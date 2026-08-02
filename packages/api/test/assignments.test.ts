@@ -39,6 +39,8 @@ function as(auth: SignedIn) {
     get: (path: string) => request(h.app).get(path).set('Cookie', auth.cookies),
     post: (path: string) =>
       request(h.app).post(path).set('Cookie', auth.cookies).set('X-CSRF-Token', auth.csrfToken),
+    put: (path: string) =>
+      request(h.app).put(path).set('Cookie', auth.cookies).set('X-CSRF-Token', auth.csrfToken),
     delete: (path: string) =>
       request(h.app).delete(path).set('Cookie', auth.cookies).set('X-CSRF-Token', auth.csrfToken),
   };
@@ -431,5 +433,169 @@ describe('the Phase 2 acceptance scenario', () => {
       participant_id: alice.body.participant.id,
       actor_user_id: worker.id,
     });
+  });
+});
+
+describe('the support team', () => {
+  it('lists staff with a name and a role and nothing else', async () => {
+    // D87. The full user list carries email, status and lockout state, and a
+    // picker needs none of them.
+    const { api } = await adminWithParticipant();
+    const worker = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
+
+    const response = await api.get(
+      `/api/v1/participants/${(await api.get('/api/v1/participants')).body.participants[0].id}/support-team`,
+    );
+
+    expect(response.status).toBe(200);
+    const listed = response.body.staff.find((one: { id: string }) => one.id === worker.id);
+    expect(Object.keys(listed).sort()).toEqual([
+      'assigned',
+      'displayName',
+      'id',
+      'role',
+      'temporaryUntil',
+    ]);
+    expect(listed.assigned).toBe(false);
+  });
+
+  it('never offers a participant account', async () => {
+    // A self-access account sees its own record and nothing else, ever.
+    const { api, participantId } = await adminWithParticipant();
+    await seedUser(h.ownerDb, h.keyRing, { role: 'participant', participantId });
+
+    const response = await api.get(`/api/v1/participants/${participantId}/support-team`);
+    expect(response.body.staff.some((one: { role: string }) => one.role === 'participant')).toBe(
+      false,
+    );
+  });
+
+  it('assigns a whole team in one write', async () => {
+    const { api, participantId } = await adminWithParticipant();
+    const one = await seedUser(h.ownerDb, h.keyRing, { role: 'worker', displayName: 'Sam Okafor' });
+    const two = await seedUser(h.ownerDb, h.keyRing, { role: 'worker', displayName: 'Jo Reid' });
+    const three = await seedUser(h.ownerDb, h.keyRing, { role: 'nurse', displayName: 'Kim Ba' });
+
+    const response = await api
+      .put(`/api/v1/participants/${participantId}/support-team`)
+      .send({ userIds: [one.id, two.id, three.id] });
+
+    expect(response.status).toBe(200);
+    expect(response.body.change.added).toHaveLength(3);
+    expect(
+      response.body.staff.filter((person: { assigned: boolean }) => person.assigned),
+    ).toHaveLength(3);
+  });
+
+  it('takes somebody off the team when they are unticked', async () => {
+    const { api, participantId } = await adminWithParticipant();
+    const one = await seedUser(h.ownerDb, h.keyRing, { role: 'worker', displayName: 'Sam Okafor' });
+    const two = await seedUser(h.ownerDb, h.keyRing, { role: 'worker', displayName: 'Jo Reid' });
+
+    await api
+      .put(`/api/v1/participants/${participantId}/support-team`)
+      .send({ userIds: [one.id, two.id] });
+
+    const response = await api
+      .put(`/api/v1/participants/${participantId}/support-team`)
+      .send({ userIds: [one.id] });
+
+    expect(response.body.change.removed).toEqual([two.displayName]);
+    const still = response.body.staff.find((person: { id: string }) => person.id === two.id);
+    expect(still.assigned).toBe(false);
+  });
+
+  it('changes nothing when the same list is saved twice', async () => {
+    const { api, participantId } = await adminWithParticipant();
+    const worker = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
+
+    await api
+      .put(`/api/v1/participants/${participantId}/support-team`)
+      .send({ userIds: [worker.id] });
+    const again = await api
+      .put(`/api/v1/participants/${participantId}/support-team`)
+      .send({ userIds: [worker.id] });
+
+    expect(again.body.change).toEqual({ added: [], removed: [], keptTemporary: [] });
+  });
+
+  it('never ends a temporary grant, and says so', async () => {
+    /*
+     * The one that matters. A temporary grant covers a named shift starting
+     * shortly. Ending it because somebody was tidying the ongoing list leaves a
+     * worker unable to open a record mid-shift.
+     */
+    const { api, participantId } = await adminWithParticipant();
+    const covering = await seedUser(h.ownerDb, h.keyRing, {
+      role: 'worker',
+      displayName: 'Jo Reid',
+    });
+
+    await api.post(`/api/v1/participants/${participantId}/assignments`).send({
+      userId: covering.id,
+      kind: 'temporary',
+      expiresAt: inAnHour(),
+      reason: 'Covering tonight',
+    });
+
+    // Saved with nobody on the ongoing team at all.
+    const response = await api
+      .put(`/api/v1/participants/${participantId}/support-team`)
+      .send({ userIds: [] });
+
+    expect(response.body.change.removed).toEqual([]);
+    expect(response.body.change.keptTemporary).toEqual([covering.displayName]);
+
+    const assignments = await api.get(`/api/v1/participants/${participantId}/assignments`);
+    expect(assignments.body.assignments[0].effective).toBe(true);
+  });
+
+  it('lets a team leader see the list, which is what the screen needs', async () => {
+    // They have always been allowed to grant access and have never been able to
+    // see who to grant it to, because listing accounts is admin-only.
+    const { participantId } = await adminWithParticipant();
+    const leaderUser = await seedUser(h.ownerDb, h.keyRing, { role: 'team_leader' });
+    await addTeamScope(h.ownerDb, leaderUser.id, participantId);
+    const leader = as(await signIn(h, leaderUser));
+
+    const response = await leader.get(`/api/v1/participants/${participantId}/support-team`);
+    expect(response.status).toBe(200);
+    expect(response.body.staff.length).toBeGreaterThan(0);
+
+    // And the full user list stays shut to them.
+    expect((await leader.get('/api/v1/users')).status).toBe(403);
+  });
+
+  it('refuses a worker outright', async () => {
+    const { api, participantId } = await adminWithParticipant();
+    const workerUser = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
+    await api
+      .put(`/api/v1/participants/${participantId}/support-team`)
+      .send({ userIds: [workerUser.id] });
+    const worker = as(await signIn(h, workerUser));
+
+    expect((await worker.get(`/api/v1/participants/${participantId}/support-team`)).status).toBe(
+      403,
+    );
+    expect(
+      (await worker.put(`/api/v1/participants/${participantId}/support-team`).send({ userIds: [] }))
+        .status,
+    ).toBe(403);
+  });
+
+  it('audits the change without writing down who works with whom', async () => {
+    const { api, participantId } = await adminWithParticipant();
+    const worker = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
+
+    await api
+      .put(`/api/v1/participants/${participantId}/support-team`)
+      .send({ userIds: [worker.id] });
+
+    expect(await auditActions(h.ownerDb)).toContain('assignment.set_team');
+
+    const [row] = await h.ownerDb.execute(
+      sql`select metadata from audit_log where action = 'assignment.set_team' limit 1`,
+    );
+    expect(row!.metadata).toEqual({ added: 1, removed: 0, kept: 0 });
   });
 });

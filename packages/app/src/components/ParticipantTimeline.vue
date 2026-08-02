@@ -16,6 +16,7 @@ import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 import { formatDayHeading, formatWindowRange, formatWindowTime } from '@/lib/format';
+import { useSessionStore } from '@/stores/session';
 
 /**
  * The merged timeline (doc 06 §4.2).
@@ -27,10 +28,12 @@ import { formatDayHeading, formatWindowRange, formatWindowTime } from '@/lib/for
  * The merge and the ordering come from @vigilo/shared, so the offline device
  * builds the identical list from its own tables.
  */
+
+const session = useSessionStore();
 const props = defineProps<{ participantId: string }>();
 
 const items = ref<TimelineItem[]>([]);
-const timeZone = ref('Australia/Melbourne');
+const timeZone = ref(session.timeZone);
 const days = ref(7);
 const loading = ref(true);
 const error = ref('');

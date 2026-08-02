@@ -6,6 +6,7 @@ import { migrateWithOwner } from './db/migrate.js';
 import { KeyRing } from './crypto/keys.js';
 import { startJobs } from './jobs/index.js';
 import { createFileStore } from './services/storage.js';
+import { applyConfiguredTimeZone } from './services/org.js';
 import { vapidKeys } from './services/vapid.js';
 
 async function main(): Promise<void> {
@@ -26,6 +27,14 @@ async function main(): Promise<void> {
   await store.ensureWritable();
 
   const { db, sql } = createDatabase(config.DATABASE_URL);
+
+  /*
+   * Only touches a settings row nobody has edited, so it is a first-run step
+   * rather than something that overrules an admin every restart. Logged either
+   * way: this decides what "today" means everywhere in the product.
+   */
+  const zone = await applyConfiguredTimeZone(db, config.ORG_TIMEZONE);
+  logger.info(zone, zone.changed ? 'org timezone set from ORG_TIMEZONE' : 'org timezone unchanged');
 
   const app = createApp(config, logger, db, keyRing);
   const jobs = startJobs(db, logger, keyRing, vapidKeys(config), store);

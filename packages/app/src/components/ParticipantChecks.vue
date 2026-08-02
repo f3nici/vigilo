@@ -29,8 +29,8 @@ const session = useSessionStore();
 
 const windows = ref<CheckWindow[]>([]);
 const schedules = ref<CheckSchedule[]>([]);
-const timeZone = ref('Australia/Melbourne');
-const date = ref(localDateOf(new Date(), 'Australia/Melbourne'));
+const timeZone = ref(session.timeZone);
+const date = ref(localDateOf(new Date(), session.timeZone));
 const loading = ref(true);
 const error = ref('');
 

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { assertTimeZone } from '@vigilo/shared';
 
 /**
  * Environment is parsed once at startup and fails loudly. A misconfigured
@@ -52,6 +53,35 @@ const envSchema = z
 
     /** Set by CI to the commit sha. Reported by /api/health as the build hash. */
     BUILD_HASH: z.string().default('dev'),
+
+    /**
+     * The organisation's timezone, applied when the settings row has never been
+     * edited (D84).
+     *
+     * Every window, every dose and every "daily" calculation is decided in this
+     * zone, and it is the only zone staff ever see. Getting it wrong is not
+     * cosmetic: a 14:00 to 16:00 window labelled in the wrong zone reads as
+     * closing at a time it does not, which is how the countdown looked like it
+     * was pointing at the start of the window rather than the end.
+     *
+     * Not authoritative on every startup. Once an admin has set the timezone
+     * deliberately, this stops applying, because a settings screen that quietly
+     * loses to an environment variable is a settings screen that lies.
+     */
+    ORG_TIMEZONE: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+      z
+        .string()
+        .default('Australia/Perth')
+        .refine((zone) => {
+          try {
+            assertTimeZone(zone);
+            return true;
+          } catch {
+            return false;
+          }
+        }, 'ORG_TIMEZONE must be an IANA name like Australia/Perth.'),
+    ),
 
     /**
      * Wraps the per-table data keys. Never in the repository, never in the

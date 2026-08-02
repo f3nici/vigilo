@@ -23,6 +23,7 @@ import { readReasonCodes, readWindow, recordEntry, recordMissReason } from '@/li
 import { uuidv7 } from '@/lib/uuid';
 import { entryInProgress } from '@/sw/register';
 import { needs, needsChoice, useFormGuard } from '@/lib/forms';
+import { useSessionStore } from '@/stores/session';
 
 /**
  * Recording a check (doc 06 §4.3).
@@ -37,10 +38,12 @@ import { needs, needsChoice, useFormGuard } from '@/lib/forms';
  * - An edited value shows as edited, with the history one tap away, and the
  *   original is never quietly replaced.
  */
+
+const session = useSessionStore();
 const route = useRoute();
 
 const windowId = computed(() => route.params.id as string);
-const timeZone = computed(() => route.query.tz?.toString() ?? 'Australia/Melbourne');
+const timeZone = computed(() => route.query.tz?.toString() ?? session.timeZone);
 
 const detail = ref<WindowDetail | null>(null);
 const values = ref<Record<string, CheckValue>>({});

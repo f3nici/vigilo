@@ -34,7 +34,7 @@ const entries = ref<DiaryEntry[]>([]);
 const categories = ref<DiaryCategory[]>([]);
 const search = ref('');
 const categoryFilter = ref('');
-const timeZone = ref('Australia/Melbourne');
+const timeZone = ref(session.timeZone);
 const loading = ref(true);
 const error = ref('');
 

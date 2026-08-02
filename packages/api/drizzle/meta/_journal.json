@@ -127,6 +127,13 @@
       "when": 1785369163773,
       "tag": "0017_care_plan_and_incident_triggers",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1785369163774,
+      "tag": "0018_default_timezone_perth",
+      "breakpoints": true
     }
   ]
 }

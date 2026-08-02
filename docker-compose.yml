@@ -38,6 +38,11 @@ services:
       MASTER_KEY: '${MASTER_KEY:?set MASTER_KEY in .env, generate one with openssl rand -base64 32}'
       LOG_LEVEL: ${LOG_LEVEL:-info}
       BUILD_HASH: ${BUILD_HASH:-local}
+      # Every window, every dose and every "daily" calculation is decided in
+      # this zone, and it is the only zone staff ever see. Applied on first run
+      # and then left alone, so changing it here later does not overrule an
+      # admin who has since set it in the product.
+      ORG_TIMEZONE: ${ORG_TIMEZONE:-Australia/Perth}
       # https://localhost is the Capacitor origin. Allowed from the first
       # deploy so native sign-in does not fail silently later.
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,https://localhost}

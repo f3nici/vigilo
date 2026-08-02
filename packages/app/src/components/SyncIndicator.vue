@@ -20,7 +20,7 @@ const session = useSessionStore();
 const open = ref(false);
 const flagged = ref<{ opId: string; kind: string; error: string; createdAt: string }[]>([]);
 
-const timeZone = computed(() => session.org?.timezone ?? 'Australia/Melbourne');
+const timeZone = computed(() => session.timeZone);
 
 const dot = computed(() => {
   switch (offline.indicator) {

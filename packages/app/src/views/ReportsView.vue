@@ -29,7 +29,7 @@ import { needsChoice, useFormGuard } from '@/lib/forms';
  */
 const session = useSessionStore();
 
-const timeZone = computed(() => session.org?.timezone ?? 'Australia/Melbourne');
+const timeZone = computed(() => session.timeZone);
 const today = computed(() => localDateOf(new Date(), timeZone.value));
 
 const tab = ref<'daily' | 'trends' | 'compliance' | 'export'>('compliance');

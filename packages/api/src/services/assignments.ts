@@ -1,8 +1,10 @@
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, ne } from 'drizzle-orm';
 import {
   isAssignmentEffective,
+  type AssignableStaff,
   type CreateAssignmentRequest,
   type ParticipantAssignment,
+  type SupportTeamChange,
 } from '@vigilo/shared';
 import type { Database } from '../db/client.js';
 import { participantAssignments, syncScopeChanges, users } from '../db/schema.js';
@@ -168,6 +170,157 @@ export async function grantAssignment(
   });
 
   return toAssignment(row!, { displayName: target.displayName, role: target.role }, new Date());
+}
+
+/* ------------------------------------------------------- the support team */
+
+/**
+ * Everyone who could support this participant, and whether they already do
+ * (D87).
+ *
+ * A name, a role and the state of one tick box. Not a filtered user list: the
+ * full one carries email, account status and lockout state, none of which
+ * belongs in a picker, and all of which a team leader currently cannot see at
+ * all because listing accounts is admin-only.
+ *
+ * Participant accounts are excluded outright. A self-access account sees its
+ * own record and nothing else, ever, and offering one here would put that
+ * mistake one stray tap away.
+ */
+export async function listAssignableStaff(
+  db: Database,
+  participantId: string,
+  now = new Date(),
+): Promise<AssignableStaff[]> {
+  const staff = await db
+    .select({ id: users.id, displayName: users.displayName, role: users.role })
+    .from(users)
+    .where(and(eq(users.status, 'active'), ne(users.role, 'participant')))
+    .orderBy(asc(users.displayName));
+
+  const current = await db
+    .select()
+    .from(participantAssignments)
+    .where(
+      and(
+        eq(participantAssignments.participantId, participantId),
+        isNull(participantAssignments.revokedAt),
+      ),
+    );
+
+  const effective = new Map<string, AssignmentRow>();
+  for (const row of current) {
+    if (isAssignmentEffective({ ...row }, now)) effective.set(row.userId, row);
+  }
+
+  return staff.map((person) => {
+    const grant = effective.get(person.id);
+    return {
+      ...person,
+      assigned: grant !== undefined,
+      temporaryUntil: grant?.kind === 'temporary' ? (grant.expiresAt?.toISOString() ?? null) : null,
+    };
+  });
+}
+
+/**
+ * Sets the whole ongoing support team in one write (D87).
+ *
+ * Assigning a house of six workers one at a time through a form is how a
+ * participant ends up with nobody assigned, which in turn is how nobody is
+ * notified and nobody can open the record.
+ *
+ * **Temporary grants are never removed here.** They were made deliberately, for
+ * a named reason, with an end time, usually to cover a shift starting shortly.
+ * Silently ending one because somebody was tidying the ongoing list is the kind
+ * of quiet change that leaves a worker unable to open a record mid-shift. They
+ * are reported back instead, and revoked one at a time where the reason is
+ * visible.
+ */
+export async function setSupportTeam(
+  db: Database,
+  participantId: string,
+  userIds: readonly string[],
+  grantedBy: string,
+  actor: AuditActor,
+  now = new Date(),
+): Promise<SupportTeamChange> {
+  const wanted = new Set(userIds);
+  const staff = await listAssignableStaff(db, participantId, now);
+  const known = new Map(staff.map((person) => [person.id, person]));
+
+  for (const id of wanted) {
+    if (!known.has(id)) {
+      throw new HttpError('validation_failed', 'One of those accounts cannot be given access.');
+    }
+  }
+
+  const added: string[] = [];
+  const removed: string[] = [];
+  const keptTemporary: string[] = [];
+
+  for (const person of staff) {
+    const shouldBeOn = wanted.has(person.id);
+    if (shouldBeOn === person.assigned) continue;
+
+    if (shouldBeOn) {
+      await grantAssignment(
+        db,
+        participantId,
+        { userId: person.id, kind: 'standing' },
+        grantedBy,
+        actor,
+      );
+      added.push(person.displayName);
+      continue;
+    }
+
+    if (person.temporaryUntil !== null) {
+      keptTemporary.push(person.displayName);
+      continue;
+    }
+
+    await revokeEffectiveAssignments(db, participantId, person.id, actor, now);
+    removed.push(person.displayName);
+  }
+
+  await recordAudit(db, {
+    action: 'assignment.set_team',
+    actor,
+    entityType: 'participant',
+    entityId: participantId,
+    participantId,
+    // Counts and ids, never the names: an audit row is not a place to restate
+    // who works with whom in prose.
+    metadata: { added: added.length, removed: removed.length, kept: keptTemporary.length },
+  });
+
+  return { added, removed, keptTemporary };
+}
+
+/** Every live grant a person holds on this participant, revoked together. */
+async function revokeEffectiveAssignments(
+  db: Database,
+  participantId: string,
+  userId: string,
+  actor: AuditActor,
+  now: Date,
+): Promise<void> {
+  const rows = await db
+    .select()
+    .from(participantAssignments)
+    .where(
+      and(
+        eq(participantAssignments.participantId, participantId),
+        eq(participantAssignments.userId, userId),
+        isNull(participantAssignments.revokedAt),
+      ),
+    );
+
+  for (const row of rows) {
+    if (!isAssignmentEffective({ ...row }, now)) continue;
+    await revokeAssignment(db, row.id, actor);
+  }
 }
 
 export async function findAssignment(db: Database, assignmentId: string): Promise<AssignmentRow> {

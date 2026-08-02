@@ -14,12 +14,12 @@ import FormError from '@/components/FormError.vue';
 import ParticipantAlerts from '@/components/ParticipantAlerts.vue';
 import EmergencyContacts from '@/components/EmergencyContacts.vue';
 import EmergencyPlanPanel from '@/components/EmergencyPlanPanel.vue';
-import ParticipantAssignments from '@/components/ParticipantAssignments.vue';
 import ParticipantChecks from '@/components/ParticipantChecks.vue';
 import ParticipantDiary from '@/components/ParticipantDiary.vue';
 import ParticipantMedications from '@/components/ParticipantMedications.vue';
 import ParticipantCarePlans from '@/components/ParticipantCarePlans.vue';
 import ParticipantIncidents from '@/components/ParticipantIncidents.vue';
+import ParticipantSupportTeam from '@/components/ParticipantSupportTeam.vue';
 import ParticipantTimeline from '@/components/ParticipantTimeline.vue';
 import * as api from '@/api/client';
 import { readParticipant } from '@/lib/records';
@@ -55,6 +55,7 @@ const tabs = [
   { key: 'care-plan', label: 'Care plan' },
   { key: 'diary', label: 'Diary' },
   { key: 'incidents', label: 'Incidents' },
+  { key: 'support-team', label: 'Support team' },
   { key: 'info', label: 'Info' },
 ] as const;
 
@@ -62,6 +63,15 @@ const tab = ref<(typeof tabs)[number]['key']>('timeline');
 
 const role = computed(() => session.principal?.role ?? 'worker');
 const canManage = computed(() => canManageParticipants(role.value));
+
+/*
+ * Support team is only a tab for somebody who can change it. A worker seeing a
+ * read-only list of their colleagues is a tab that answers a question nobody
+ * asked, and doc 01 §4.1 puts granting access with admins and team leaders.
+ */
+const visibleTabs = computed(() =>
+  tabs.filter((one) => one.key !== 'support-team' || canGrantAccess(role.value)),
+);
 
 async function load(): Promise<void> {
   error.value = '';
@@ -200,7 +210,7 @@ async function restore(): Promise<void> {
         aria-label="Participant sections"
       >
         <button
-          v-for="one in tabs"
+          v-for="one in visibleTabs"
           :key="one.key"
           type="button"
           class="min-h-11 border-b-2 px-3 font-medium"
@@ -225,6 +235,8 @@ async function restore(): Promise<void> {
       <ParticipantCarePlans v-else-if="tab === 'care-plan'" :participant-id="participant.id" />
 
       <ParticipantIncidents v-else-if="tab === 'incidents'" :participant-id="participant.id" />
+
+      <ParticipantSupportTeam v-else-if="tab === 'support-team'" :participant-id="participant.id" />
 
       <ParticipantDiary
         v-else-if="tab === 'diary'"
@@ -296,8 +308,6 @@ async function restore(): Promise<void> {
           :can-edit="canWriteEmergencyPlan(role)"
           @changed="load"
         />
-
-        <ParticipantAssignments v-if="canGrantAccess(role)" :participant-id="participant.id" />
       </template>
     </template>
   </div>

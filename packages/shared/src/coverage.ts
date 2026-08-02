@@ -62,6 +62,40 @@ export const coverageRangeSchema = z
 
 export type CoverageRangeInput = z.infer<typeof coverageRangeSchema>;
 
+/**
+ * Round-the-clock support, written down (D86).
+ *
+ * An empty pattern already means "always covered", but nothing on screen said
+ * so, and an absence is a poor way to state a fact somebody will later be asked
+ * to defend. This is the same thing spelled out: seven days, midnight to
+ * midnight. The screen shows it, the audit log records it, and a coverage
+ * recalculation reads a real pattern rather than inferring from a gap.
+ *
+ * `00:00` at both ends because `<input type="time">` refuses `24:00`, and
+ * `endOfDayMinutes` already reads a closing `00:00` as the end of the day.
+ */
+export const ROUND_THE_CLOCK: CoverageRangeInput[] = [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({
+  weekday,
+  startTime: '00:00',
+  endTime: '00:00',
+}));
+
+/** Whether a pattern covers every minute of the week. */
+export function isRoundTheClock(ranges: readonly CoverageRangeInput[]): boolean {
+  if (ranges.length === 0) return false;
+
+  const covered = new Set<number>();
+  for (const range of ranges) {
+    if (
+      parseTimeOfDay(range.startTime) === 0 &&
+      endOfDayMinutes(range.endTime) === MINUTES_PER_DAY
+    ) {
+      covered.add(range.weekday);
+    }
+  }
+  return covered.size === 7;
+}
+
 export const putCoveragePatternRequestSchema = z
   .object({ ranges: z.array(coverageRangeSchema).max(70) })
   .strict();

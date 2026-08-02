@@ -16,7 +16,7 @@ import { useSessionStore } from '@/stores/session';
  */
 const session = useSessionStore();
 
-const timeZone = computed(() => session.org?.timezone ?? 'Australia/Melbourne');
+const timeZone = computed(() => session.timeZone);
 
 const records = ref<MyRecords | null>(null);
 const today = ref('');

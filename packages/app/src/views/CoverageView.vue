@@ -2,7 +2,9 @@
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import {
+  ROUND_THE_CLOCK,
   addDays,
+  isRoundTheClock,
   localDateOf,
   type CoverageException,
   type RecalculationPreview,
@@ -11,6 +13,7 @@ import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 import { formatDateTime } from '@/lib/format';
+import { useSessionStore } from '@/stores/session';
 
 /**
  * Coverage (doc 06 §5).
@@ -22,6 +25,8 @@ import { formatDateTime } from '@/lib/format';
  * Recalculating is previewed first and never applied silently, because it can
  * rewrite months of compliance history in one click.
  */
+
+const session = useSessionStore();
 const route = useRoute();
 const participantId = computed(() => route.params.id as string);
 
@@ -35,8 +40,8 @@ const error = ref('');
 const notice = ref('');
 
 const preview = ref<RecalculationPreview | null>(null);
-const from = ref(localDateOf(new Date(), 'Australia/Melbourne'));
-const to = ref(addDays(localDateOf(new Date(), 'Australia/Melbourne'), 7));
+const from = ref(localDateOf(new Date(), session.timeZone));
+const to = ref(addDays(localDateOf(new Date(), session.timeZone), 7));
 
 const exceptionStart = ref('');
 const exceptionEnd = ref('');
@@ -57,6 +62,26 @@ function rangesFor(weekday: number): Range[] {
   return ranges.value.filter((range) => range.weekday === weekday);
 }
 
+/**
+ * Round the clock, as a tick box (D86).
+ *
+ * Fourteen time fields to say "we are always there" is a lot of clicking to
+ * express the commonest arrangement there is, and leaving the pattern empty
+ * says the same thing without saying it anywhere on screen.
+ *
+ * Ticking it writes the real seven-day pattern rather than clearing to nothing,
+ * so the screen, the audit log and any later recalculation all read a decision
+ * somebody made instead of inferring one from a blank.
+ */
+const alwaysCovered = ref(false);
+
+function setAlwaysCovered(on: boolean): void {
+  alwaysCovered.value = on;
+  // Unticking empties the week rather than restoring what was there before.
+  // Guessing at hours somebody has not chosen is worse than an obvious blank.
+  ranges.value = on ? ROUND_THE_CLOCK.map((range) => ({ ...range })) : [];
+}
+
 async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
@@ -66,6 +91,7 @@ async function load(): Promise<void> {
       api.listCoverageExceptions(participantId.value),
     ]);
     ranges.value = pattern.ranges.map((range) => ({ ...range }));
+    alwaysCovered.value = isRoundTheClock(ranges.value);
     exceptions.value = list;
   } catch (err) {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not load coverage.';
@@ -91,6 +117,7 @@ async function savePattern(): Promise<void> {
   try {
     const pattern = await api.putCoveragePattern(participantId.value, ranges.value);
     ranges.value = pattern.ranges.map((range) => ({ ...range }));
+    alwaysCovered.value = isRoundTheClock(ranges.value);
     notice.value =
       'Saved. This applies from today. Windows already created keep their current setting until you recalculate below.';
   } catch (err) {
@@ -168,52 +195,70 @@ async function recalculate(apply: boolean): Promise<void> {
     <template v-else>
       <section class="card p-4">
         <h2 class="text-lg font-semibold">Weekly pattern</h2>
-        <p class="text-text-secondary mt-1 text-sm">
-          Leave a day empty for no coverage. A range that runs past midnight is two ranges, one
-          ending 24:00 and one starting 00:00 the next day. With no ranges at all, every window is
-          expected.
+
+        <label class="mt-3 flex min-h-11 items-center gap-2">
+          <input
+            type="checkbox"
+            class="size-5"
+            :checked="alwaysCovered"
+            @change="setAlwaysCovered(($event.target as HTMLInputElement).checked)"
+          />
+          <span class="font-medium">Supported 24 hours a day, 7 days a week</span>
+        </label>
+
+        <p v-if="alwaysCovered" class="text-text-secondary mt-2 text-sm">
+          Every check is expected, at any hour of any day. You can still add a dated exception below
+          for a hospital stay or a week away, and that will win over this.
         </p>
 
-        <ul class="mt-4 space-y-3">
-          <li v-for="day in WEEKDAYS" :key="day.value" class="flex flex-wrap items-center gap-2">
-            <span class="w-28 font-medium">{{ day.label }}</span>
+        <template v-else>
+          <p class="text-text-secondary mt-2 text-sm">
+            Leave a day empty for no coverage. A range that runs past midnight is two ranges, one
+            ending 24:00 and one starting 00:00 the next day. With no ranges at all, every window is
+            expected.
+          </p>
 
-            <div
-              v-for="range in rangesFor(day.value)"
-              :key="`${range.weekday}-${range.startTime}-${range.endTime}`"
-              class="flex items-center gap-1"
-            >
-              <input
-                v-model="range.startTime"
-                class="field max-w-32"
-                type="time"
-                aria-label="From"
-              />
-              <span class="text-text-secondary">to</span>
-              <input v-model="range.endTime" class="field max-w-32" type="time" aria-label="To" />
+          <ul class="mt-4 space-y-3">
+            <li v-for="day in WEEKDAYS" :key="day.value" class="flex flex-wrap items-center gap-2">
+              <span class="w-28 font-medium">{{ day.label }}</span>
+
+              <div
+                v-for="range in rangesFor(day.value)"
+                :key="`${range.weekday}-${range.startTime}-${range.endTime}`"
+                class="flex items-center gap-1"
+              >
+                <input
+                  v-model="range.startTime"
+                  class="field max-w-32"
+                  type="time"
+                  aria-label="From"
+                />
+                <span class="text-text-secondary">to</span>
+                <input v-model="range.endTime" class="field max-w-32" type="time" aria-label="To" />
+                <button
+                  type="button"
+                  class="text-state-missed min-h-11 px-2"
+                  aria-label="Remove range"
+                  @click="removeRange(range)"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <span v-if="rangesFor(day.value).length === 0" class="text-text-secondary text-sm">
+                Not covered
+              </span>
+
               <button
                 type="button"
-                class="text-state-missed min-h-11 px-2"
-                aria-label="Remove range"
-                @click="removeRange(range)"
+                class="btn border-border-default border"
+                @click="addRange(day.value)"
               >
-                ✕
+                Add hours
               </button>
-            </div>
-
-            <span v-if="rangesFor(day.value).length === 0" class="text-text-secondary text-sm">
-              Not covered
-            </span>
-
-            <button
-              type="button"
-              class="btn border-border-default border"
-              @click="addRange(day.value)"
-            >
-              Add hours
-            </button>
-          </li>
-        </ul>
+            </li>
+          </ul>
+        </template>
 
         <button type="button" class="btn btn-primary mt-4" :disabled="saving" @click="savePattern">
           {{ saving ? 'Saving…' : 'Save pattern' }}

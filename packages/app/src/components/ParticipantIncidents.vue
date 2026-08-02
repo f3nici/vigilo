@@ -32,7 +32,7 @@ const props = defineProps<{ participantId: string }>();
 const session = useSessionStore();
 
 const incidents = ref<Incident[]>([]);
-const timeZone = ref('Australia/Melbourne');
+const timeZone = ref(session.timeZone);
 const colleagues = ref<Colleague[]>([]);
 const statusFilter = ref<'' | 'open' | 'under_review' | 'closed'>('');
 const loading = ref(true);
