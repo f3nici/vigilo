@@ -180,9 +180,19 @@ async function save(): Promise<void> {
         <DynamicForm :schema="schema" :values="values" @change="onChange" />
       </section>
 
-      <div v-if="templateId" class="card flex flex-wrap items-center gap-3 p-4">
+      <!--
+        Always here, even before a form is chosen (D78). Hiding it would be the
+        greyed-out button by another route: the worker presses nothing and
+        learns nothing. Pressing it says to choose a form and points at the
+        picker.
+      -->
+      <div class="card flex flex-wrap items-center gap-3 p-4">
         <p class="text-text-secondary text-sm">
-          Saved against {{ chosen?.name }}, at the time you press save.
+          {{
+            chosen
+              ? `Saved against ${chosen.name}, at the time you press save.`
+              : 'Choose a form above, fill it in, then save.'
+          }}
         </p>
         <button type="button" class="btn btn-primary ml-auto" :disabled="saving" @click="save">
           {{ saving ? 'Saving…' : 'Save this check' }}
