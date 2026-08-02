@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { renderRichText, richTextHeadings, richTextPlainText } from './richtext.js';
 
 /**
  * Care plans (doc 01 §7.1, doc 03 §9, doc 06 §4.7).
@@ -7,198 +8,23 @@ import { z } from 'zod';
  * admins, versioned, with draft and published states. Workers read the
  * published version and the app marks it unread until they open it.
  *
- * ## Why the body is not HTML
- *
- * Doc 07 §7 lists "care plan rich text sanitised with DOMPurify on write and on
- * render" as the XSS mitigation. This stores the author's source text instead
- * and renders it here, which is the same mitigation taken one step earlier: if
- * no HTML is ever stored, there is no stored HTML to sanitise, and a sanitiser
- * that is skipped on one code path cannot let anything through (D63).
- *
- * The renderer escapes every character of the source before it emits a single
- * tag, and the only tags it can emit are the six in `ALLOWED_TAGS`. There is no
- * passthrough: a care plan containing `<script>` renders as the visible text
- * `<script>`, which is what a nurse who typed it meant anyway.
- *
- * Both sides call `renderCarePlan`, so what the author previews is what the
- * worker reads, on a phone with no signal, from the same function.
+ * The body is source text, never HTML. It is rendered by the shared rich text
+ * renderer in `richtext.ts`, which is where the reasoning for that lives (D63)
+ * and which check form info blocks use as well.
  */
-
-/* ------------------------------------------------------------- rich text */
-
-/** Everything the renderer can emit. Nothing adds to this list at runtime. */
-export const ALLOWED_TAGS = ['h2', 'h3', 'p', 'ul', 'ol', 'li', 'strong', 'em'] as const;
 
 export const CARE_PLAN_MAX_BODY = 50_000;
 
-/**
- * The whole grammar, and deliberately a small one (doc 01 §7.1 asks for
- * headings and lists):
- *
- * ```
- * ## A heading            ### A smaller heading
- * - a bullet              1. a numbered step
- * **bold**                *italic*
- * ```
- *
- * A blank line starts a new block. Anything else is a paragraph. There are no
- * links and no images: a care plan is instructions for the person standing in
- * the room, and a link is something they cannot follow with no signal.
+/*
+ * The renderer used to live here, and these names are what the care plan code
+ * calls it by. Kept as aliases rather than renamed at every call site: a nurse
+ * previewing a plan and a worker reading one both go through `renderCarePlan`,
+ * and that is the name doc 07 §7 and CLAUDE.md both use.
  */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-/**
- * Bold and italic, applied to text that is already escaped.
- *
- * Order matters: `**` before `*`, or the bold markers are eaten as two italics.
- * The escaped text contains no `<`, so the tags introduced here are the only
- * tags in the output.
- */
-function inline(escaped: string): string {
-  return escaped
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, '<em>$1</em>');
-}
-
-/** A stable id for a heading, built from characters we choose, never copied. */
-export function headingSlug(text: string, index: number): string {
-  const base = text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60);
-  return base === '' ? `section-${index + 1}` : `${base}-${index + 1}`;
-}
-
-export type CarePlanHeading = { level: 2 | 3; text: string; slug: string };
-
-const HEADING = /^(#{2,3})\s+(.*)$/;
-const BULLET = /^[-*]\s+(.*)$/;
-const NUMBERED = /^\d+[.)]\s+(.*)$/;
-
-/** The headings, in order, for the table of contents doc 06 §4.7 asks for. */
-export function carePlanHeadings(source: string): CarePlanHeading[] {
-  const headings: CarePlanHeading[] = [];
-
-  for (const line of source.split(/\r?\n/)) {
-    const match = HEADING.exec(line.trim());
-    if (!match) continue;
-    const text = match[2]!.trim();
-    if (text === '') continue;
-    headings.push({
-      level: match[1]!.length === 2 ? 2 : 3,
-      text,
-      slug: headingSlug(text, headings.length),
-    });
-  }
-
-  return headings;
-}
-
-/**
- * The source, as HTML.
- *
- * Deterministic and pure, so the server, the author's preview and a phone with
- * no signal all produce the same document from the same bytes.
- */
-export function renderCarePlan(source: string): string {
-  const lines = source.split(/\r?\n/);
-  const out: string[] = [];
-
-  let list: { tag: 'ul' | 'ol'; items: string[] } | null = null;
-  let paragraph: string[] = [];
-  let headingIndex = 0;
-
-  const flushParagraph = () => {
-    if (paragraph.length === 0) return;
-    out.push(`<p>${inline(escapeHtml(paragraph.join(' ')))}</p>`);
-    paragraph = [];
-  };
-
-  const flushList = () => {
-    if (list === null) return;
-    const items = list.items.map((item) => `<li>${inline(escapeHtml(item))}</li>`).join('');
-    out.push(`<${list.tag}>${items}</${list.tag}>`);
-    list = null;
-  };
-
-  for (const raw of lines) {
-    const line = raw.trim();
-
-    if (line === '') {
-      flushParagraph();
-      flushList();
-      continue;
-    }
-
-    const heading = HEADING.exec(line);
-    if (heading) {
-      flushParagraph();
-      flushList();
-      const text = heading[2]!.trim();
-      if (text === '') continue;
-      const tag = heading[1]!.length === 2 ? 'h2' : 'h3';
-      const slug = headingSlug(text, headingIndex);
-      headingIndex += 1;
-      out.push(`<${tag} id="${slug}">${inline(escapeHtml(text))}</${tag}>`);
-      continue;
-    }
-
-    const bullet = BULLET.exec(line);
-    if (bullet) {
-      flushParagraph();
-      if (list?.tag !== 'ul') {
-        flushList();
-        list = { tag: 'ul', items: [] };
-      }
-      list.items.push(bullet[1]!);
-      continue;
-    }
-
-    const numbered = NUMBERED.exec(line);
-    if (numbered) {
-      flushParagraph();
-      if (list?.tag !== 'ol') {
-        flushList();
-        list = { tag: 'ol', items: [] };
-      }
-      list.items.push(numbered[1]!);
-      continue;
-    }
-
-    flushList();
-    paragraph.push(line);
-  }
-
-  flushParagraph();
-  flushList();
-
-  return out.join('');
-}
-
-/** The body as plain text, for a PDF and for anything that cannot take HTML. */
-export function carePlanPlainText(source: string): string {
-  return source
-    .split(/\r?\n/)
-    .map((line) => {
-      const trimmed = line.trim();
-      const heading = HEADING.exec(trimmed);
-      if (heading) return heading[2]!.trim();
-      const bullet = BULLET.exec(trimmed);
-      if (bullet) return `• ${bullet[1]!}`;
-      return trimmed;
-    })
-    .join('\n')
-    .replace(/\*\*/g, '')
-    .replace(/\*/g, '');
-}
+export const renderCarePlan = renderRichText;
+export const carePlanHeadings = richTextHeadings;
+export const carePlanPlainText = richTextPlainText;
+export type { RichTextHeading as CarePlanHeading } from './richtext.js';
 
 /* -------------------------------------------------------------- the plan */
 

@@ -10,6 +10,7 @@ import CategoryChip from '@/components/CategoryChip.vue';
 import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
+import { needsText, useFormGuard } from '@/lib/forms';
 
 /**
  * Diary categories (doc 06 §5).
@@ -41,8 +42,15 @@ async function load(): Promise<void> {
 
 onMounted(load);
 
+const guard = useFormGuard();
+
 async function add(): Promise<void> {
-  if (label.value.trim() === '') return;
+  if (
+    saving.value ||
+    !guard.ready(needsText('category-label', label.value, 'Give the category a name.'))
+  ) {
+    return;
+  }
   saving.value = true;
   error.value = '';
   try {
@@ -85,12 +93,20 @@ async function update(
       </p>
     </div>
 
-    <FormError :message="error" />
+    <FormError :message="guard.problem.value?.message ?? error" />
 
     <form class="card flex flex-wrap items-end gap-3 p-4" @submit.prevent="add">
       <div class="min-w-48 flex-1">
         <label class="field-label" for="category-label">Name</label>
-        <input id="category-label" v-model="label" type="text" class="field" maxlength="60" />
+        <input
+          id="category-label"
+          v-model="label"
+          type="text"
+          class="field"
+          maxlength="60"
+          :aria-invalid="guard.invalid('category-label')"
+          @input="guard.clear()"
+        />
       </div>
       <div class="min-w-40">
         <label class="field-label" for="category-colour">Colour</label>
@@ -100,9 +116,7 @@ async function update(
           </option>
         </select>
       </div>
-      <button type="submit" class="btn btn-primary" :disabled="saving || label.trim() === ''">
-        Add category
-      </button>
+      <button type="submit" class="btn btn-primary" :disabled="saving">Add category</button>
     </form>
 
     <p v-if="loading" class="text-text-secondary">Loading.</p>

@@ -158,18 +158,32 @@ Field types:
 
 | Type | Config | Renders as |
 | --- | --- | --- |
-| `number` | unit, decimal places, min/max as input sanity bounds only | numeric keypad with unit suffix |
+| `number` | optional unit, decimal places, min/max as input sanity bounds only | numeric keypad, with the unit beside it where there is one |
 | `boolean` | label | yes/no toggle |
 | `checklist` | list of items | multiple tick boxes, each independently ticked |
 | `single_choice` | option list | radio group or dropdown |
 | `multi_choice` | option list | multi-select chips |
-| `text` | single or multi line, max length | text input, dictation available via the OS keyboard |
+| `text` | single or multi line (single by default), max length | text input, dictation available via the OS keyboard |
 | `date` | | date picker |
-| `time` | | time picker |
+| `time` | one time, or several | time picker, and where several are allowed a list the worker adds to |
 | `datetime` | | combined picker |
+| `info` | markdown body | guidance on the form. Records nothing |
 
 Every field has: a stable key, a display label, optional help text, a required
 flag, and a sort order.
+
+**A unit is optional** (D79). Plenty of what a support team counts has no unit:
+repositions, seizures, times offered a drink.
+
+**A time field can hold several times** (D80). A nebuliser can be given more
+than once inside one 2-hour window, and each one happened at its own time.
+
+**An `info` field is guidance, not an answer** (D81). It is where the reference
+material a worker needs goes: a chart of secretion types beside the field asking
+about it. It takes headings, lists, bold and tables, it can never be required,
+and it never reaches a report, an export or the participant's own record,
+because it is not something anybody recorded. A form made only of guidance is
+refused.
 
 **No normal ranges.** Explicitly out of scope. Vigilo records values, it does
 not judge them. No thresholds, no colour-coding by value, no clinical alerting.

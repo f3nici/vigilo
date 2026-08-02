@@ -143,10 +143,21 @@ service container.
 - **A medication sign-off is never deleted.** The app database role has no
   DELETE on `medication_administrations`, enforced by a grant, and there is no
   route that would use one.
-- **A care plan body is source text, never HTML** (D63). `renderCarePlan` in
-  shared escapes everything before emitting one of eight tags, both sides call
-  it, and DOMPurify runs over its output in the browser as a second layer.
-  Nothing anywhere stores or trusts HTML.
+- **Rich text is source text, never HTML** (D63). The renderer lives in
+  `packages/shared/src/richtext.ts` and is used by care plans and by the
+  guidance blocks on a check form. It escapes everything before emitting a tag,
+  the only tags it can emit are in `ALLOWED_TAGS`, both sides call it, and
+  DOMPurify runs over its output in `RichText.vue`, the one component in the app
+  that calls `v-html`. Nothing anywhere stores or trusts HTML.
+- **A primary button is never greyed out for missing input** (D78). Use
+  `useFormGuard` in `packages/app/src/lib/forms.ts`: the button stays live,
+  pressing it names what is missing and focuses the field. Only `busy` disables
+  a button. A new form that reaches for `:disabled="!canSave"` is the bug this
+  replaced.
+- **A check form field can record nothing.** An `info` field is guidance and is
+  typed `required: false` so it can never hold a check open (D81). Anything
+  asking "does this field hold an answer" goes through `fieldRecordsValue`
+  rather than testing the type inline.
 - **Incidents never reach a device** (D67) and are never visible to a
   participant account, refused in the service rather than hidden in the UI.
 - **A self-access account reaches `/auth` and three `/me` paths and nothing

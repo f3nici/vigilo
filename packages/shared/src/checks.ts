@@ -74,11 +74,12 @@ export function validateFieldValue(field: TemplateField, value: CheckValue): str
           ? `${field.label} takes a whole number.`
           : `${field.label} takes at most ${field.decimals} decimal places.`;
       }
+      const unit = field.unit === null ? '' : ` ${field.unit}`;
       if (field.min !== undefined && value.number < field.min) {
-        return `${field.label} cannot be below ${field.min}${field.unit}.`;
+        return `${field.label} cannot be below ${field.min}${unit}.`;
       }
       if (field.max !== undefined && value.number > field.max) {
-        return `${field.label} cannot be above ${field.max}${field.unit}.`;
+        return `${field.label} cannot be above ${field.max}${unit}.`;
       }
       return null;
     }
@@ -118,15 +119,32 @@ export function validateFieldValue(field: TemplateField, value: CheckValue): str
         ? null
         : `${field.label} takes a date.`;
 
-    case 'time':
-      return typeof value.json === 'string' && isTimeOfDay(value.json)
+    case 'time': {
+      if (!field.allowMultiple) {
+        return typeof value.json === 'string' && isTimeOfDay(value.json)
+          ? null
+          : `${field.label} takes a time.`;
+      }
+      if (!Array.isArray(value.json)) return `${field.label} takes a list of times.`;
+      if (!value.json.every(isTimeOfDay)) return `${field.label} takes times like 14:30.`;
+      // Two nebs at the same minute is a double tap, not two treatments.
+      return new Set(value.json).size === value.json.length
         ? null
-        : `${field.label} takes a time.`;
+        : `${field.label} has the same time twice.`;
+    }
 
     case 'datetime':
       return typeof value.json === 'string' && !Number.isNaN(Date.parse(value.json))
         ? null
         : `${field.label} takes a date and time.`;
+
+    /*
+     * Guidance holds no answer, so anything arriving against it came from a
+     * form built against a different version of this template, or from
+     * something hand-rolling a request. Either way it is not a value.
+     */
+    case 'info':
+      return `${field.label} is guidance on the form and does not record anything.`;
   }
 }
 

@@ -269,6 +269,19 @@
     color: var(--vigilo-text);
   }
 
+  /*
+   * The field a submit attempt complained about.
+   *
+   * Vigilo never greys out a primary button for missing input: the button
+   * works, and pressing it says what is needed and points at where. Colour is
+   * not the only signal, because it never is here. `aria-invalid` and the
+   * message in the alert above the form both carry it too.
+   */
+  .field[aria-invalid='true'] {
+    border-color: var(--vigilo-missed);
+    outline: 1px solid var(--vigilo-missed);
+  }
+
   /* Label above the field, never placeholder-as-label. */
   .field-label {
     display: block;

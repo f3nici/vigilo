@@ -50,12 +50,16 @@ const baseField = {
  * `min` and `max` are input sanity bounds, nothing more (doc 01 §5.2). They
  * stop a slipped decimal point reaching the record. They do not colour a value,
  * do not flag one, and are never shown as "normal".
+ *
+ * `unit` is nullable because plenty of numbers are just counters: how many
+ * times someone was repositioned, how many seizures. Forcing a unit on those
+ * produced fields labelled "Repositions" reading "3 ml".
  */
 const numberField = z
   .object({
     ...baseField,
     type: z.literal('number'),
-    unit: z.string().trim().min(1).max(20),
+    unit: z.string().trim().min(1).max(20).nullable().default(null),
     decimals: z.number().int().min(0).max(4).default(0),
     min: z.number().optional(),
     max: z.number().optional(),
@@ -76,6 +80,11 @@ const multiChoiceField = z
   .object({ ...baseField, type: z.literal('multi_choice'), options: z.array(choiceSchema).min(1) })
   .strict();
 
+/**
+ * `multiline` defaults to false: most of what a worker types on a check form is
+ * a few words, and a text area that size invites an essay in a field the next
+ * person has to read at a glance. A field that wants paragraphs says so.
+ */
 const textField = z
   .object({
     ...baseField,
@@ -86,8 +95,44 @@ const textField = z
   .strict();
 
 const dateField = z.object({ ...baseField, type: z.literal('date') }).strict();
-const timeField = z.object({ ...baseField, type: z.literal('time') }).strict();
+
+/**
+ * `allowMultiple` turns one time into a list of them.
+ *
+ * The case it exists for: a participant may be given a nebuliser more than once
+ * inside a 2-hour window, and each one happened at its own time. Modelling that
+ * as several fields would mean guessing the maximum in advance and leaving the
+ * rest blank.
+ */
+const timeField = z
+  .object({ ...baseField, type: z.literal('time'), allowMultiple: z.boolean().default(false) })
+  .strict();
+
 const dateTimeField = z.object({ ...baseField, type: z.literal('datetime') }).strict();
+
+/**
+ * A block of guidance on the form. It records nothing.
+ *
+ * This is where the reference material a worker needs while filling the form in
+ * goes: a chart of what each type of secretion looks like, a reminder of the
+ * order to do something in. Putting it on the form means they read it where the
+ * decision is made rather than remembering it from a care plan.
+ *
+ * `required` is typed as `false` rather than omitted so every consumer that
+ * reads `field.required` keeps working, and so a block of prose can never be
+ * something an entry is incomplete without.
+ */
+const infoField = z
+  .object({
+    key: fieldKeySchema,
+    label: fieldLabelSchema,
+    sort: baseField.sort,
+    type: z.literal('info'),
+    required: z.literal(false).default(false),
+    /** Markdown, rendered by `renderRichText`. Never HTML (D63). */
+    body: z.string().trim().min(1).max(4000),
+  })
+  .strict();
 
 export const templateFieldSchema = z.discriminatedUnion('type', [
   numberField,
@@ -99,6 +144,7 @@ export const templateFieldSchema = z.discriminatedUnion('type', [
   dateField,
   timeField,
   dateTimeField,
+  infoField,
 ]);
 
 export type TemplateField = z.infer<typeof templateFieldSchema>;
@@ -114,7 +160,19 @@ export const fieldTypes = [
   'date',
   'time',
   'datetime',
+  'info',
 ] as const;
+
+/**
+ * Whether a field holds an answer.
+ *
+ * Everything except an info block does. Asked as a question rather than tested
+ * against a list at each call site, so a field type added later has to answer
+ * it here once instead of being silently counted as recording something.
+ */
+export function fieldRecordsValue(field: TemplateField): boolean {
+  return field.type !== 'info';
+}
 
 export const templateSchemaSchema = z.object({ fields: z.array(templateFieldSchema) }).strict();
 
@@ -153,7 +211,14 @@ export function validateTemplateSchema(schema: TemplateSchema): SchemaProblem[] 
   const problems: SchemaProblem[] = [];
 
   if (schema.fields.length === 0) {
-    problems.push({ field: null, message: 'A template needs at least one field.' });
+    problems.push({ field: null, message: 'This form needs at least one field.' });
+  } else if (!schema.fields.some(fieldRecordsValue)) {
+    // Guidance with nothing to fill in is a care plan, not a check form, and a
+    // window bound to one could never be anything but complete.
+    problems.push({
+      field: null,
+      message: 'This form only has guidance on it. Add at least one field a worker fills in.',
+    });
   }
 
   const seen = new Set<string>();
@@ -255,6 +320,15 @@ export function diffTemplateSchemas(
       (old.unit !== field.unit || old.decimals !== field.decimals)
     ) {
       diff.changed.push({ key, what: `unit or decimals changed` });
+    }
+    if (old.type === 'time' && field.type === 'time' && old.allowMultiple !== field.allowMultiple) {
+      diff.changed.push({
+        key,
+        what: field.allowMultiple ? 'now takes several times' : 'now takes one time',
+      });
+    }
+    if (old.type === 'info' && field.type === 'info' && old.body !== field.body) {
+      diff.changed.push({ key, what: 'guidance reworded' });
     }
     const oldChoices = choicesOf(old)
       .map((choice) => choice.value)
@@ -407,6 +481,9 @@ export function formatFieldValue(
 
   if (value.json !== null && value.json !== undefined) {
     const chosen = Array.isArray(value.json) ? value.json : [value.json];
+    // Several times read as times, not as a choice list: nothing resolves them
+    // to a label, and the comma is what tells 09:10 from 14:30.
+    if (field?.type === 'time') return chosen.join(', ');
     return chosen.map((one) => choiceLabel(field, one)).join(', ');
   }
 

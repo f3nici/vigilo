@@ -22,6 +22,7 @@ import { closesIn, formatDateTime, formatWindowRange } from '@/lib/format';
 import { readReasonCodes, readWindow, recordEntry, recordMissReason } from '@/lib/records';
 import { uuidv7 } from '@/lib/uuid';
 import { entryInProgress } from '@/sw/register';
+import { needs, needsChoice, useFormGuard } from '@/lib/forms';
 
 /**
  * Recording a check (doc 06 §4.3).
@@ -150,8 +151,22 @@ onUnmounted(() => {
  */
 const isEdit = computed(() => detail.value?.entryStatus === 'complete');
 
+const guard = useFormGuard();
+
 async function save(): Promise<void> {
-  if (detail.value === null || problems.value.length > 0) return;
+  if (detail.value === null || saving.value) return;
+  if (
+    !guard.ready(
+      needs('check-form', problems.value.length === 0, problems.value[0]?.message ?? ''),
+      needs(
+        'check-form',
+        dirtyValues.value.length > 0,
+        'Nothing has been filled in yet, so there is nothing to save.',
+      ),
+    )
+  ) {
+    return;
+  }
   saving.value = true;
   error.value = '';
   try {
@@ -190,7 +205,14 @@ async function save(): Promise<void> {
 }
 
 async function saveReason(): Promise<void> {
-  if (chosenReason.value === '' || reasonProblem.value !== null) return;
+  if (
+    !guard.ready(
+      needsChoice('miss-reason', chosenReason.value, 'Choose why this check was missed.'),
+      needs('miss-note', reasonProblem.value === null, reasonProblem.value ?? ''),
+    )
+  ) {
+    return;
+  }
   saving.value = true;
   error.value = '';
   try {
@@ -259,7 +281,7 @@ function describeRevisionValue(value: unknown): string {
         {{ closesIn(detail.endsAt) }} · {{ describeWindowStatus(detail.status) }}
       </p>
 
-      <FormError :message="error" />
+      <FormError :message="guard.problem.value?.message ?? error" />
 
       <!-- Doc 06 §4.3: the closed window still opens, and says what will happen. -->
       <div v-if="isClosed" class="card p-4" :style="{ borderColor: 'var(--vigilo-late)' }">
@@ -298,7 +320,13 @@ function describeRevisionValue(value: unknown): string {
 
         <div>
           <label class="field-label" for="miss-reason">Reason</label>
-          <select id="miss-reason" v-model="chosenReason" class="field">
+          <select
+            id="miss-reason"
+            v-model="chosenReason"
+            class="field"
+            :aria-invalid="guard.invalid('miss-reason')"
+            @change="guard.clear()"
+          >
             <option value="">Choose a reason…</option>
             <option v-for="code in reasonCodes" :key="code.id" :value="code.id">
               {{ code.label }}
@@ -314,12 +342,7 @@ function describeRevisionValue(value: unknown): string {
           <p v-if="reasonProblem" class="text-state-missed mt-1 text-sm">{{ reasonProblem }}</p>
         </div>
 
-        <button
-          type="button"
-          class="btn btn-primary"
-          :disabled="saving || chosenReason === '' || reasonProblem !== null"
-          @click="saveReason"
-        >
+        <button type="button" class="btn btn-primary" :disabled="saving" @click="saveReason">
           Record the reason
         </button>
       </section>
@@ -330,7 +353,8 @@ function describeRevisionValue(value: unknown): string {
         {{ detail.missReason.recordedByName ?? 'someone' }}.
       </p>
 
-      <section class="card p-4">
+      <!-- `tabindex` so a save that complains can put focus back on the form. -->
+      <section id="check-form" class="card p-4" tabindex="-1">
         <DynamicForm :schema="schema" :values="values" @change="onChange" />
       </section>
 
@@ -350,12 +374,7 @@ function describeRevisionValue(value: unknown): string {
           <span v-else>Everything required is filled.</span>
         </p>
 
-        <button
-          type="button"
-          class="btn btn-primary ml-auto"
-          :disabled="saving || problems.length > 0 || dirtyValues.length === 0"
-          @click="save"
-        >
+        <button type="button" class="btn btn-primary ml-auto" :disabled="saving" @click="save">
           {{ saving ? 'Saving…' : 'Save' }}
         </button>
       </div>

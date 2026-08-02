@@ -7,6 +7,7 @@ import FormError from '@/components/FormError.vue';
 import { useSessionStore } from '@/stores/session';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
+import { needs, needsText, useFormGuard } from '@/lib/forms';
 
 const session = useSessionStore();
 const router = useRouter();
@@ -35,16 +36,21 @@ const mismatch = computed(
   () => confirmPassword.value !== '' && confirmPassword.value !== newPassword.value,
 );
 
-const canSubmit = computed(
-  () =>
-    !busy.value &&
-    currentPassword.value !== '' &&
-    newPassword.value !== '' &&
-    problems.value.length === 0 &&
-    !mismatch.value,
-);
+/**
+ * What still has to be answered, in the order the fields appear. The button is
+ * never greyed out for any of it: pressing it says which one and points there.
+ */
+const guard = useFormGuard();
+
+const checks = () => [
+  needsText('current-password', currentPassword.value, 'Type your current password.'),
+  needsText('new-password', newPassword.value, 'Choose a new password.'),
+  needs('new-password', problems.value.length === 0, problems.value[0] ?? ''),
+  needs('confirm-password', !mismatch.value, 'The two new passwords do not match.'),
+];
 
 async function submit(): Promise<void> {
+  if (busy.value || !guard.ready(...checks())) return;
   busy.value = true;
   error.value = '';
   try {
@@ -129,7 +135,7 @@ async function submit(): Promise<void> {
         </p>
       </div>
 
-      <button class="btn btn-primary w-full" type="submit" :disabled="!canSubmit">
+      <button class="btn btn-primary w-full" type="submit" :disabled="busy">
         {{ busy ? 'Saving' : 'Save and sign in again' }}
       </button>
     </form>
