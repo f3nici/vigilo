@@ -7,6 +7,7 @@ import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 import { useSessionStore } from '@/stores/session';
 import { formatDateTime } from '@/lib/format';
+import { needsText, useFormGuard } from '@/lib/forms';
 
 /**
  * Check forms (doc 06 §5).
@@ -40,7 +41,17 @@ async function load(): Promise<void> {
 
 onMounted(load);
 
+const guard = useFormGuard();
+
 async function create(): Promise<void> {
+  if (
+    !guard.ready(
+      needsText('template-name', name.value, 'Give the check form a name before creating it.'),
+    )
+  ) {
+    return;
+  }
+
   creating.value = true;
   error.value = '';
   try {
@@ -65,7 +76,7 @@ async function create(): Promise<void> {
       records already entered against an earlier version.
     </p>
 
-    <FormError :message="error" />
+    <FormError :message="guard.problem.value?.message ?? error" />
 
     <form v-if="canManage" class="card flex flex-wrap items-end gap-3 p-4" @submit.prevent="create">
       <div class="min-w-56 flex-1">
@@ -75,9 +86,13 @@ async function create(): Promise<void> {
           v-model="name"
           class="field"
           type="text"
-          required
           placeholder="Vent observations"
+          :aria-invalid="guard.invalid('template-name')"
+          @input="guard.clear()"
         />
+        <p class="text-text-secondary mt-1 text-sm">
+          What the team calls this set of checks. You add the fields on the next screen.
+        </p>
       </div>
       <div class="min-w-56 flex-1">
         <label class="field-label" for="template-description">Description</label>
@@ -89,7 +104,7 @@ async function create(): Promise<void> {
           placeholder="2-hourly ventilator checks"
         />
       </div>
-      <button class="btn btn-primary" type="submit" :disabled="creating || name.trim() === ''">
+      <button class="btn btn-primary" type="submit" :disabled="creating">
         {{ creating ? 'Creating…' : 'New check form' }}
       </button>
     </form>

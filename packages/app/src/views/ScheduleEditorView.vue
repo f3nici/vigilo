@@ -14,6 +14,7 @@ import {
 import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
+import { needsChoice, needsText, useFormGuard } from '@/lib/forms';
 
 /**
  * The schedule editor (doc 06 §5).
@@ -155,7 +156,22 @@ function startNew(): void {
 
 const blocked = computed(() => (preview.value?.problems.length ?? 0) > 0);
 
+const guard = useFormGuard();
+
+/*
+ * Only when creating. Editing an existing schedule saves its segments, and the
+ * name and template are already set and not on the form.
+ */
+const checks = () =>
+  editingId.value === null
+    ? [
+        needsChoice('schedule-template', templateId.value, 'Choose which check form to use.'),
+        needsText('schedule-name', name.value, 'Give the schedule a name.'),
+      ]
+    : [];
+
 async function save(): Promise<void> {
+  if (!guard.ready(...checks())) return;
   saving.value = true;
   error.value = '';
   notice.value = '';
@@ -223,7 +239,7 @@ function appliesOn(segment: SegmentInput, weekday: number): boolean {
       <h1 class="text-2xl font-semibold">Check schedule</h1>
     </div>
 
-    <FormError :message="error" />
+    <FormError :message="guard.problem.value?.message ?? error" />
     <p v-if="notice" class="text-text-secondary">{{ notice }}</p>
 
     <p v-if="loading" class="text-text-secondary">Loading.</p>
@@ -281,7 +297,13 @@ function appliesOn(segment: SegmentInput, weekday: number): boolean {
           <template v-if="editingId === null">
             <div>
               <label class="field-label" for="schedule-template">Check form</label>
-              <select id="schedule-template" v-model="templateId" class="field">
+              <select
+                id="schedule-template"
+                v-model="templateId"
+                class="field"
+                :aria-invalid="guard.invalid('schedule-template')"
+                @change="guard.clear()"
+              >
                 <option
                   v-for="template in publishedTemplates"
                   :key="template.id"
@@ -418,14 +440,7 @@ function appliesOn(segment: SegmentInput, weekday: number): boolean {
             </ul>
           </div>
 
-          <button
-            type="button"
-            class="btn btn-primary"
-            :disabled="
-              saving || blocked || (editingId === null && (name.trim() === '' || templateId === ''))
-            "
-            @click="save"
-          >
+          <button type="button" class="btn btn-primary" :disabled="saving || blocked" @click="save">
             {{ saving ? 'Saving…' : editingId === null ? 'Create schedule' : 'Save segments' }}
           </button>
         </section>

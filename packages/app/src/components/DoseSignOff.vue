@@ -17,6 +17,7 @@ import { readColleagues, recordPrn, signOffDose } from '@/lib/records';
 import { useSessionStore } from '@/stores/session';
 import { uuidv7 } from '@/lib/uuid';
 import { formatWindowTime } from '@/lib/format';
+import { needs, useFormGuard } from '@/lib/forms';
 
 /**
  * Signing off one dose (doc 01 §7.2).
@@ -85,7 +86,16 @@ const problem = computed(() =>
 
 const prnReasonMissing = computed(() => isPrn.value && reason.value.trim() === '');
 
-const canSave = computed(() => problem.value === null && !prnReasonMissing.value && !saving.value);
+/**
+ * What still has to be answered, in the order the fields appear. The button is
+ * never greyed out for any of it: pressing it says which one and points there.
+ */
+const guard = useFormGuard();
+
+const checks = () => [
+  needs('dose-outcome', problem.value === null, problem.value ?? ''),
+  needs('dose-reason', !prnReasonMissing.value, 'Say why this PRN dose was given.'),
+];
 
 onMounted(async () => {
   // Only fetched when a witness could be needed, so the ordinary sign-off does
@@ -100,7 +110,7 @@ onMounted(async () => {
 });
 
 async function save(): Promise<void> {
-  if (!canSave.value) return;
+  if (saving.value || !guard.ready(...checks())) return;
   saving.value = true;
   error.value = '';
 
@@ -175,7 +185,15 @@ async function save(): Promise<void> {
 
     <label v-if="isPrn" class="block space-y-1">
       <span class="field-label">Why it was given</span>
-      <textarea v-model="reason" rows="2" class="field" maxlength="2000" required />
+      <textarea
+        id="dose-reason"
+        v-model="reason"
+        rows="2"
+        class="field"
+        maxlength="2000"
+        :aria-invalid="guard.invalid('dose-reason')"
+        @input="guard.clear()"
+      />
     </label>
 
     <label class="block space-y-1">
@@ -212,13 +230,13 @@ async function save(): Promise<void> {
       </span>
     </label>
 
-    <FormError :message="error" />
+    <FormError :message="guard.problem.value?.message ?? error" />
 
     <p v-if="problem" class="text-state-missed text-sm">{{ problem }}</p>
     <p v-else-if="prnReasonMissing" class="text-text-secondary text-sm">Say why this was given.</p>
 
     <div class="flex flex-wrap gap-2">
-      <button type="submit" class="btn btn-primary" :disabled="!canSave">
+      <button type="submit" class="btn btn-primary" :disabled="saving">
         {{ saving ? 'Saving' : 'Save' }}
       </button>
       <button type="button" class="btn border-border-default border" @click="emit('cancel')">

@@ -1,17 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import DOMPurify from 'dompurify';
-import { ALLOWED_TAGS, carePlanHeadings, renderCarePlan } from '@vigilo/shared';
+import { carePlanHeadings } from '@vigilo/shared';
+import RichText from '@/components/RichText.vue';
 
 /**
  * A care plan, rendered (doc 06 §4.7).
  *
- * Two layers, and the order matters. The stored body is the author's source
- * text, never HTML, and `renderCarePlan` escapes every character of it before
- * emitting a single tag (D63). DOMPurify then runs over our own output with the
- * same allow-list, which is doc 07 §7's "sanitised on render" kept honestly:
- * the primary control is that there is no HTML to sanitise, and this is what
- * catches a future bug in the renderer.
+ * The body goes through `RichText`, which is the only thing in the app that
+ * turns source text into markup. What is left here is what is particular to a
+ * care plan: the table of contents, and saying so when nothing has been written.
  */
 /*
  * `hideContents` rather than `showContents`, because Vue casts an absent
@@ -22,15 +19,6 @@ import { ALLOWED_TAGS, carePlanHeadings, renderCarePlan } from '@vigilo/shared';
 const props = defineProps<{ body: string; hideContents?: boolean }>();
 
 const headings = computed(() => carePlanHeadings(props.body));
-
-const html = computed(() =>
-  DOMPurify.sanitize(renderCarePlan(props.body), {
-    ALLOWED_TAGS: [...ALLOWED_TAGS],
-    // The only attribute the renderer emits, on a slug it built itself from
-    // characters it chose.
-    ALLOWED_ATTR: ['id'],
-  }),
-);
 
 const empty = computed(() => props.body.trim() === '');
 </script>
@@ -57,62 +45,7 @@ const empty = computed(() => props.body.trim() === '');
         </ul>
       </nav>
 
-      <!-- eslint-disable-next-line vue/no-v-html -->
-      <article class="care-plan" v-html="html" />
+      <RichText :source="body" />
     </template>
   </div>
 </template>
-
-<style scoped>
-/*
- * The plan is read on a phone in poor light, so the body is generous and the
- * headings are clearly separated. Nothing here is coloured by content.
- */
-.care-plan :deep(h2) {
-  font-size: 1.15rem;
-  font-weight: 600;
-  margin-top: 1.5rem;
-  margin-bottom: 0.5rem;
-  scroll-margin-top: 5rem;
-}
-
-.care-plan :deep(h3) {
-  font-size: 1rem;
-  font-weight: 600;
-  margin-top: 1rem;
-  margin-bottom: 0.375rem;
-  scroll-margin-top: 5rem;
-}
-
-.care-plan :deep(p) {
-  margin-bottom: 0.75rem;
-  line-height: 1.6;
-}
-
-.care-plan :deep(ul),
-.care-plan :deep(ol) {
-  margin-bottom: 0.75rem;
-  padding-left: 1.5rem;
-  line-height: 1.6;
-}
-
-.care-plan :deep(ul) {
-  list-style: disc;
-}
-
-.care-plan :deep(ol) {
-  list-style: decimal;
-}
-
-.care-plan :deep(li) {
-  margin-bottom: 0.25rem;
-}
-
-.care-plan :deep(strong) {
-  font-weight: 600;
-}
-
-.care-plan :deep(em) {
-  font-style: italic;
-}
-</style>

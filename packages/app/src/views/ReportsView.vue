@@ -17,6 +17,7 @@ import TrendChart from '@/components/TrendChart.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 import { useSessionStore } from '@/stores/session';
+import { needsChoice, useFormGuard } from '@/lib/forms';
 
 /**
  * Reports (doc 06 §5).
@@ -112,8 +113,13 @@ watch(participantId, async (id) => {
   }
 });
 
+const guard = useFormGuard();
+
 async function loadTrend(): Promise<void> {
-  if (participantId.value === '' || fieldKey.value === '') return;
+  if (participantId.value === '') return;
+  if (!guard.ready(needsChoice('trend-field', fieldKey.value, 'Choose a reading to chart.'))) {
+    return;
+  }
   busy.value = true;
   error.value = '';
   try {
@@ -211,7 +217,7 @@ function describeJob(job: ExportJob): string {
   <div class="space-y-5">
     <h1 class="text-2xl font-semibold">Reports</h1>
 
-    <FormError :message="error" />
+    <FormError :message="guard.problem.value?.message ?? error" />
 
     <!-- One participant and one period, shared by all four tools. -->
     <div class="card flex flex-wrap items-end gap-3 p-4">
@@ -386,7 +392,13 @@ function describeJob(job: ExportJob): string {
         <div class="flex flex-wrap items-end gap-3">
           <div class="min-w-52">
             <label class="field-label" for="trend-field">Field</label>
-            <select id="trend-field" v-model="fieldKey" class="field">
+            <select
+              id="trend-field"
+              v-model="fieldKey"
+              class="field"
+              :aria-invalid="guard.invalid('trend-field')"
+              @change="guard.clear()"
+            >
               <option v-for="field in trendFields" :key="field.fieldKey" :value="field.fieldKey">
                 {{ field.label }}{{ field.unit ? ` (${field.unit})` : '' }}
               </option>
@@ -400,12 +412,7 @@ function describeJob(job: ExportJob): string {
               <option value="week">Weekly average</option>
             </select>
           </div>
-          <button
-            type="button"
-            class="btn btn-primary"
-            :disabled="busy || fieldKey === ''"
-            @click="loadTrend"
-          >
+          <button type="button" class="btn btn-primary" :disabled="busy" @click="loadTrend">
             {{ busy ? 'Loading' : 'Show trend' }}
           </button>
         </div>

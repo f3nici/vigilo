@@ -158,6 +158,62 @@ describe('field validation', () => {
     ).toBeNull();
   });
 
+  describe('several times', () => {
+    const nebs = templateSchemaSchema.parse({
+      fields: [
+        {
+          key: 'neb_times',
+          label: 'Nebuliser given at',
+          type: 'time',
+          sort: 10,
+          allowMultiple: true,
+        },
+      ],
+    }).fields[0]!;
+
+    it('takes a list of times', () => {
+      expect(
+        validateFieldValue(nebs, { fieldKey: 'neb_times', json: ['09:10', '10:40'] }),
+      ).toBeNull();
+    });
+
+    it('refuses one time where a list is expected, and the reverse', () => {
+      expect(validateFieldValue(nebs, { fieldKey: 'neb_times', json: '09:10' })).toContain(
+        'a list of times',
+      );
+      expect(
+        validateFieldValue(field('seen_at'), value({ fieldKey: 'seen_at', json: ['09:10'] })),
+      ).toContain('takes a time');
+    });
+
+    it('refuses something that is not a time', () => {
+      expect(validateFieldValue(nebs, { fieldKey: 'neb_times', json: ['9am'] })).toContain(
+        'times like 14:30',
+      );
+    });
+
+    it('refuses the same time twice, which is a double tap and not two nebs', () => {
+      expect(
+        validateFieldValue(nebs, { fieldKey: 'neb_times', json: ['09:10', '09:10'] }),
+      ).toContain('same time twice');
+    });
+  });
+
+  it('refuses a value recorded against a block of guidance', () => {
+    // Nothing in the app sends one. Anything that does is built against a
+    // different version of the form, or is not the app.
+    const guidance = templateSchemaSchema.parse({
+      fields: [{ key: 'chart', label: 'Chart', type: 'info', sort: 10, body: 'Read this.' }],
+    }).fields[0]!;
+
+    expect(validateFieldValue(guidance, { fieldKey: 'chart', text: 'anything' })).toContain(
+      'does not record anything',
+    );
+    // An empty one is simply nothing, which is what a form full of guidance
+    // sends every time it is saved.
+    expect(validateFieldValue(guidance, { fieldKey: 'chart', text: null })).toBeNull();
+  });
+
   it('reports every problem at once', () => {
     const problems = validateValues(SCHEMA, [
       { fieldKey: 'urine_output', number: 9000 },

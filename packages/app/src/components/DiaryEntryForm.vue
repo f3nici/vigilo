@@ -18,6 +18,7 @@ import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 import { FilePrepareError, prepareForUpload } from '@/lib/images';
+import { needs, needsChoice, needsText, useFormGuard } from '@/lib/forms';
 
 /**
  * Writing a diary entry (doc 06 §4.5).
@@ -97,15 +98,22 @@ const timeProblem = computed(() => {
   return occurredAtProblem(at, new Date());
 });
 
-const canSave = computed(
-  () =>
-    !saving.value &&
-    !uploading.value &&
-    categoryId.value !== '' &&
-    body.value.trim() !== '' &&
-    body.value.length <= DIARY_BODY_MAX &&
-    timeProblem.value === null,
-);
+/**
+ * What still has to be answered, in the order the fields appear. The button is
+ * never greyed out for any of it: pressing it says which one and points there.
+ */
+const guard = useFormGuard();
+
+const checks = () => [
+  needsChoice('diary-category', categoryId.value, 'Choose what this entry is about.'),
+  needsText('diary-body', body.value, 'Write what happened before saving.'),
+  needs(
+    'diary-body',
+    body.value.length <= DIARY_BODY_MAX,
+    `This entry is longer than the ${DIARY_BODY_MAX} characters an entry can hold.`,
+  ),
+  needs('diary-occurred', timeProblem.value === null, timeProblem.value ?? ''),
+];
 
 async function attach(event: Event): Promise<void> {
   const input = event.target as HTMLInputElement;
@@ -154,7 +162,7 @@ async function removeAttachment(id: string): Promise<void> {
 }
 
 async function save(): Promise<void> {
-  if (!canSave.value) return;
+  if (saving.value || uploading.value || !guard.ready(...checks())) return;
   saving.value = true;
   error.value = '';
 
@@ -191,7 +199,7 @@ async function save(): Promise<void> {
   <form class="card space-y-4 p-4" @submit.prevent="save">
     <h3 class="text-lg font-semibold">{{ isEdit ? 'Edit entry' : 'New diary entry' }}</h3>
 
-    <FormError :message="error" />
+    <FormError :message="guard.problem.value?.message ?? error" />
 
     <!--
       Each chip carries its own aria-label. Leaving the name to be computed
@@ -199,7 +207,7 @@ async function save(): Promise<void> {
       chips render an aria-hidden dot beside the label and came out as unnamed
       buttons, so seven of the eight categories announced nothing at all.
     -->
-    <fieldset>
+    <fieldset id="diary-category" tabindex="-1">
       <legend class="field-label">Category</legend>
       <div class="flex flex-wrap gap-2">
         <button
@@ -228,6 +236,8 @@ async function save(): Promise<void> {
         class="field min-h-32"
         :maxlength="DIARY_BODY_MAX"
         placeholder="Assisted with shower, good mood throughout."
+        :aria-invalid="guard.invalid('diary-body')"
+        @input="guard.clear()"
       />
       <p class="text-text-secondary mt-1 text-sm">
         Dictation works from the keyboard if typing is awkward.
@@ -236,7 +246,14 @@ async function save(): Promise<void> {
 
     <div>
       <label class="field-label" for="diary-occurred">When it happened</label>
-      <input id="diary-occurred" v-model="occurredAtLocal" type="datetime-local" class="field" />
+      <input
+        id="diary-occurred"
+        v-model="occurredAtLocal"
+        type="datetime-local"
+        class="field"
+        :aria-invalid="guard.invalid('diary-occurred')"
+        @input="guard.clear()"
+      />
       <p v-if="timeProblem" class="text-state-missed mt-1 text-sm">{{ timeProblem }}</p>
       <p v-else class="text-text-secondary mt-1 text-sm">
         Defaults to now. Change it if you are writing up something from earlier.
@@ -303,7 +320,7 @@ async function save(): Promise<void> {
     </div>
 
     <div class="flex flex-wrap gap-2">
-      <button type="submit" class="btn btn-primary" :disabled="!canSave">
+      <button type="submit" class="btn btn-primary" :disabled="saving || uploading">
         {{ saving ? 'Saving…' : isEdit ? 'Save changes' : 'Record entry' }}
       </button>
       <button type="button" class="btn border-border-default border" @click="emit('cancelled')">

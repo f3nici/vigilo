@@ -18,6 +18,7 @@ import { readColleagues } from '@/lib/records';
 import { useSessionStore } from '@/stores/session';
 import { uuidv7 } from '@/lib/uuid';
 import { formatDateTimeIn } from '@/lib/format';
+import { needsText, useFormGuard } from '@/lib/forms';
 
 /**
  * The incident section of the participant screen (doc 01 §7.3).
@@ -125,8 +126,20 @@ async function raise(): Promise<void> {
   }
 }
 
+const guard = useFormGuard();
+
 async function close(id: string): Promise<void> {
-  if (closureNotes.value.trim() === '') return;
+  if (
+    !guard.ready(
+      needsText(
+        'incident-closure-notes',
+        closureNotes.value,
+        'Say how this incident was resolved.',
+      ),
+    )
+  ) {
+    return;
+  }
   saving.value = true;
   error.value = '';
   try {
@@ -142,7 +155,9 @@ async function close(id: string): Promise<void> {
 }
 
 async function addAction(id: string): Promise<void> {
-  if (actionText.value.trim() === '') return;
+  if (!guard.ready(needsText('incident-action', actionText.value, 'Write the action first.'))) {
+    return;
+  }
   saving.value = true;
   error.value = '';
   try {
@@ -210,7 +225,7 @@ const now = new Date();
       reportable-incident process is handled outside Vigilo.
     </p>
 
-    <FormError :message="error" />
+    <FormError :message="guard.problem.value?.message ?? error" />
 
     <!-- ---------------------------------------------------------- raising -->
     <form v-if="raising" class="card space-y-4 p-4" @submit.prevent="raise">
@@ -404,7 +419,14 @@ const now = new Date();
           <div class="flex flex-wrap items-end gap-2">
             <label class="min-w-52 grow">
               <span class="field-label">Add a follow-up action</span>
-              <input v-model="actionText" class="field" maxlength="2000" />
+              <input
+                id="incident-action"
+                v-model="actionText"
+                class="field"
+                maxlength="2000"
+                :aria-invalid="guard.invalid('incident-action')"
+                @input="guard.clear()"
+              />
             </label>
             <label class="min-w-44">
               <span class="field-label">For</span>
@@ -422,7 +444,7 @@ const now = new Date();
             <button
               type="button"
               class="btn border-border-default border"
-              :disabled="saving || actionText.trim() === ''"
+              :disabled="saving"
               @click="addAction(incident.id)"
             >
               Add
@@ -446,7 +468,15 @@ const now = new Date();
           <template v-if="closingId === incident.id">
             <label>
               <span class="field-label">Closure notes</span>
-              <textarea v-model="closureNotes" rows="3" class="field" maxlength="10000" />
+              <textarea
+                id="incident-closure-notes"
+                v-model="closureNotes"
+                rows="3"
+                class="field"
+                maxlength="10000"
+                :aria-invalid="guard.invalid('incident-closure-notes')"
+                @input="guard.clear()"
+              />
               <span class="text-text-secondary block text-sm">
                 A closure nobody can read the reasoning for is a closure nobody can review.
               </span>
@@ -455,7 +485,7 @@ const now = new Date();
               <button
                 type="button"
                 class="btn btn-primary"
-                :disabled="saving || closureNotes.trim() === ''"
+                :disabled="saving"
                 @click="close(incident.id)"
               >
                 Close it

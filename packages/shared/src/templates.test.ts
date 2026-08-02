@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   diffTemplateSchemas,
+  fieldRecordsValue,
+  formatFieldValue,
   isEmptyDiff,
   orderedFields,
   requiredFieldKeys,
@@ -160,11 +162,23 @@ describe('schema parsing', () => {
     expect(templateSchemaSchema.safeParse(empty).success).toBe(false);
   });
 
-  it('refuses a number field with no unit', () => {
+  it('takes a number field with no unit, because some things are counts', () => {
     const noUnit = {
-      fields: [{ key: 'reading', label: 'Reading', type: 'number', required: true, sort: 10 }],
+      fields: [
+        { key: 'repositions', label: 'Repositions', type: 'number', required: true, sort: 10 },
+      ],
     };
-    expect(templateSchemaSchema.safeParse(noUnit).success).toBe(false);
+    const parsed = templateSchemaSchema.parse(noUnit);
+    expect(parsed.fields[0]).toMatchObject({ type: 'number', unit: null });
+  });
+
+  it('still refuses an empty unit, which is a blank somebody typed into', () => {
+    const blank = {
+      fields: [
+        { key: 'reading', label: 'Reading', type: 'number', required: true, sort: 10, unit: '  ' },
+      ],
+    };
+    expect(templateSchemaSchema.safeParse(blank).success).toBe(false);
   });
 
   it('refuses a key that is not a stable identifier', () => {
@@ -319,6 +333,137 @@ describe('publish diff', () => {
     const diff = diffTemplateSchemas(VENT, next);
     expect(diff.changed).toContainEqual({ key: 'suction_done', what: 'now required' });
     expect(diff.changed).toContainEqual({ key: 'vent_mode', what: 'options changed' });
+  });
+});
+
+describe('several times on one field', () => {
+  const nebs = templateSchemaSchema.parse({
+    fields: [
+      {
+        key: 'neb_times',
+        label: 'Nebuliser given at',
+        type: 'time',
+        sort: 10,
+        allowMultiple: true,
+      },
+    ],
+  });
+
+  it('defaults to one time, so an existing form is unchanged', () => {
+    const single = templateSchemaSchema.parse({
+      fields: [{ key: 'woke_at', label: 'Woke at', type: 'time', sort: 10 }],
+    });
+    expect(single.fields[0]).toMatchObject({ type: 'time', allowMultiple: false });
+  });
+
+  it('reads a list of times as times rather than as choices', () => {
+    // Nothing resolves these to a label, and the comma is what tells one from
+    // the next.
+    expect(formatFieldValue(nebs.fields[0], { json: ['09:10', '10:40'] })).toBe('09:10, 10:40');
+  });
+
+  it('reads in clock order whatever order it was stored in', () => {
+    /*
+     * The app adds them in clock order, but the API stores what it is sent, and
+     * a replayed outbox row can arrive any way round. The released image did
+     * exactly this. A record reading "15:30, 09:10" makes the reader work out
+     * which came first.
+     */
+    expect(formatFieldValue(nebs.fields[0], { json: ['15:30', '09:10'] })).toBe('09:10, 15:30');
+  });
+
+  it('leaves a choice list in the order it was recorded', () => {
+    // Only times are re-ordered. A checklist's order is the form's order.
+    const cares = templateSchemaSchema.parse({
+      fields: [
+        {
+          key: 'cares',
+          label: 'Cares',
+          type: 'checklist',
+          sort: 10,
+          items: [
+            { value: 'mouth_care', label: 'Mouth care' },
+            { value: 'repositioned', label: 'Repositioned' },
+          ],
+        },
+      ],
+    });
+    expect(formatFieldValue(cares.fields[0], { json: ['repositioned', 'mouth_care'] })).toBe(
+      'Repositioned, Mouth care',
+    );
+  });
+
+  it('names the change when a form starts taking several', () => {
+    const before = templateSchemaSchema.parse({
+      fields: [{ key: 'neb_times', label: 'Nebuliser given at', type: 'time', sort: 10 }],
+    });
+    expect(diffTemplateSchemas(before, nebs).changed).toEqual([
+      { key: 'neb_times', what: 'now takes several times' },
+    ]);
+  });
+});
+
+describe('a block of guidance', () => {
+  const withInfo = templateSchemaSchema.parse({
+    fields: [
+      {
+        key: 'secretions_chart',
+        label: 'Types of secretion',
+        type: 'info',
+        sort: 10,
+        body: '| Type | Looks like |\n| - | - |\n| 1 | Clear |',
+      },
+      { key: 'secretion_type', label: 'Type seen', type: 'number', sort: 20, required: true },
+    ],
+  });
+
+  it('records nothing', () => {
+    const [info, number] = withInfo.fields;
+    expect(fieldRecordsValue(info!)).toBe(false);
+    expect(fieldRecordsValue(number!)).toBe(true);
+  });
+
+  it('can never be required, so it cannot hold a check open', () => {
+    expect(requiredFieldKeys(withInfo)).toEqual(['secretion_type']);
+
+    // Not merely defaulted false: there is nowhere in the schema to put a true.
+    const forced = {
+      fields: [
+        { key: 'note', label: 'Note', type: 'info', sort: 10, body: 'Read this.', required: true },
+      ],
+    };
+    expect(templateSchemaSchema.safeParse(forced).success).toBe(false);
+  });
+
+  it('needs a body, because an empty block of guidance is a blank on the form', () => {
+    const empty = {
+      fields: [{ key: 'note', label: 'Note', type: 'info', sort: 10, body: '   ' }],
+    };
+    expect(templateSchemaSchema.safeParse(empty).success).toBe(false);
+  });
+
+  it('refuses a form that is only guidance', () => {
+    // A window bound to one could never be anything but complete, and what the
+    // admin has built is a care plan rather than a check form.
+    const onlyGuidance = templateSchemaSchema.parse({
+      fields: [{ key: 'note', label: 'Note', type: 'info', sort: 10, body: 'Read this.' }],
+    });
+    expect(validateTemplateSchema(onlyGuidance)).toEqual([
+      {
+        field: null,
+        message: 'This form only has guidance on it. Add at least one field a worker fills in.',
+      },
+    ]);
+    expect(validateTemplateSchema(withInfo)).toEqual([]);
+  });
+
+  it('names a reworded block in the publish diff', () => {
+    const reworded = templateSchemaSchema.parse({
+      fields: [{ ...withInfo.fields[0], body: 'Something else entirely.' }, withInfo.fields[1]],
+    });
+    expect(diffTemplateSchemas(withInfo, reworded).changed).toEqual([
+      { key: 'secretions_chart', what: 'guidance reworded' },
+    ]);
   });
 });
 

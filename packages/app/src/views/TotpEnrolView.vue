@@ -8,6 +8,7 @@ import QrCode from '@/components/QrCode.vue';
 import { useSessionStore } from '@/stores/session';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
+import { needs, needsText, useFormGuard } from '@/lib/forms';
 
 /**
  * Two-factor is mandatory for admin, team leader and nurse (doc 01 §10).
@@ -32,7 +33,23 @@ onMounted(async () => {
   }
 });
 
+const guard = useFormGuard();
+
 async function confirm(): Promise<void> {
+  if (
+    busy.value ||
+    !guard.ready(
+      needs(
+        'acknowledged',
+        acknowledged.value,
+        'Save the recovery codes first, then tick the box. They are shown once and are the only way back in.',
+      ),
+      needsText('code', code.value, 'Type the six-digit code your authenticator app is showing.'),
+    )
+  ) {
+    return;
+  }
+
   busy.value = true;
   error.value = '';
   try {
@@ -63,7 +80,7 @@ async function confirm(): Promise<void> {
         shows.
       </p>
 
-      <FormError :message="error" />
+      <FormError :message="guard.problem.value?.message ?? error" />
 
       <template v-if="enrolment">
         <div class="flex justify-center py-2">
@@ -87,7 +104,14 @@ async function confirm(): Promise<void> {
             </li>
           </ul>
           <label class="mt-3 flex items-start gap-2 text-sm">
-            <input v-model="acknowledged" type="checkbox" class="mt-1 size-5" />
+            <input
+              id="acknowledged"
+              v-model="acknowledged"
+              type="checkbox"
+              class="mt-1 size-5"
+              :aria-invalid="guard.invalid('acknowledged')"
+              @change="guard.clear()"
+            />
             <span>I have saved these codes somewhere safe.</span>
           </label>
         </div>
@@ -101,12 +125,13 @@ async function confirm(): Promise<void> {
               class="field tabular"
               inputmode="numeric"
               autocomplete="one-time-code"
-              required
-              :disabled="busy || !acknowledged"
+              :disabled="busy"
+              :aria-invalid="guard.invalid('code')"
+              @input="guard.clear()"
             />
           </div>
 
-          <button class="btn btn-primary w-full" type="submit" :disabled="busy || !acknowledged">
+          <button class="btn btn-primary w-full" type="submit" :disabled="busy">
             {{ busy ? 'Checking' : 'Confirm and finish' }}
           </button>
         </form>

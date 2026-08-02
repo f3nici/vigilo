@@ -14,6 +14,7 @@ import { markCarePlanRead, readCarePlans } from '@/lib/records';
 import { useSessionStore } from '@/stores/session';
 import { useOfflineStore } from '@/stores/offline';
 import { formatDateTime } from '@/lib/format';
+import { needsText, useFormGuard } from '@/lib/forms';
 
 /**
  * The care plan section of the participant screen (doc 06 §4.7).
@@ -140,8 +141,21 @@ async function saveDraft(): Promise<void> {
   }
 }
 
+const guard = useFormGuard();
+
 async function publish(): Promise<void> {
-  if (editing.value === null || changeSummary.value.trim() === '') return;
+  if (editing.value === null) return;
+  if (
+    !guard.ready(
+      needsText(
+        'care-plan-change-summary',
+        changeSummary.value,
+        'Say what changed. It is what tells workers where to look.',
+      ),
+    )
+  ) {
+    return;
+  }
   saving.value = true;
   error.value = '';
   try {
@@ -216,7 +230,7 @@ watch(
       </button>
     </div>
 
-    <FormError :message="error" />
+    <FormError :message="guard.problem.value?.message ?? error" />
     <p v-if="loading" class="text-text-secondary">Loading.</p>
 
     <template v-else>
@@ -320,10 +334,13 @@ watch(
               <label>
                 <span class="field-label">What changed</span>
                 <input
+                  id="care-plan-change-summary"
                   v-model="changeSummary"
                   class="field"
                   maxlength="300"
                   placeholder="Added the seizure plan"
+                  :aria-invalid="guard.invalid('care-plan-change-summary')"
+                  @input="guard.clear()"
                 />
               </label>
               <p class="text-text-secondary text-sm">
@@ -353,7 +370,7 @@ watch(
                 v-else
                 type="button"
                 class="btn btn-primary"
-                :disabled="saving || changeSummary.trim() === ''"
+                :disabled="saving"
                 @click="publish"
               >
                 {{ saving ? 'Publishing' : 'Publish this version' }}

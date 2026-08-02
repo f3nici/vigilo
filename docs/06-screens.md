@@ -214,7 +214,7 @@ version, and a version history for nurses and admins.
 | Participants | Table, create and edit, archive. Tabs per participant for details, alerts, contacts, emergency plan, assignments, schedules, coverage |
 | Assignments | Assign workers, grant temporary access with expiry and reason, see and revoke active grants |
 | Check templates | List, versions, and the field builder |
-| Field builder | Drag-to-reorder field list, per-field type, label, key, unit, options, required, help text. Live preview of the rendered form beside the editor. Publish action with a diff against the previous version |
+| Field builder | Drag-to-reorder field list, per-field type, label, key, optional unit, options, required, help text, guidance body. Live preview of the rendered form beside the editor. Publish action with a diff against the previous version |
 | Schedules | Per participant: template, segments with window length and anchor time, active dates. See the detail below |
 | Coverage | Weekly grid editor for supported hours, plus a list of dated exceptions. Recalculate action with a preview of what would change |
 | Diary categories | Label, colour, order, active |
@@ -232,8 +232,16 @@ so it deserves care:
 - Left: ordered field list, drag to reorder, click to edit.
 - Right: the real rendered form, exactly as a worker will see it on a phone,
   updating live.
-- Publishing shows a diff (fields added, removed, relabelled) and a warning that
-  existing records keep the old version.
+- A light bulb beside the field picker explains what each field type is for,
+  because "Checklist", "One of" and "Several of" cannot be told apart from the
+  names alone.
+- Publishing is one button (D83). Pressing it shows a diff (fields added,
+  removed, relabelled, guidance reworded) and a warning that existing records
+  keep the old version, and that is what you confirm. There is no review step
+  to complete first.
+- The screen says out loud what versioning means: publishing makes this the
+  version workers fill in, it cannot be edited afterwards, and editing it later
+  starts the next version instead.
 - Keys are auto-generated from labels but editable before first publish, then
   locked forever.
 
@@ -313,6 +321,11 @@ performance rather than the participant's care.
   high-contrast mode. Staff use this in dim rooms, sometimes with gloves.
 - **No infinite scroll on clinical history.** Explicit date ranges, so a person
   can state what period they looked at.
+- **A primary action is never greyed out for missing input** (D78). The button
+  works. Pressing it with something missing highlights the field, says what is
+  needed in one sentence, and moves focus there. Only a request in flight
+  disables a button. One implementation, `useFormGuard`, so every form in the
+  app complains in the same way and in the order the fields appear.
 - **Never interrupt an entry in progress.** A service worker update, a session
   warning or an install prompt waits until the current form is saved. Losing
   half-typed observations to a UI event is the fastest way to lose staff trust.

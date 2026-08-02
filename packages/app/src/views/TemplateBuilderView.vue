@@ -15,6 +15,7 @@ import {
   type TemplateSchema,
 } from '@vigilo/shared';
 import DynamicForm from '@/components/DynamicForm.vue';
+import FieldTypeGuide from '@/components/FieldTypeGuide.vue';
 import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
@@ -123,14 +124,18 @@ function addField(type: FieldType): void {
   const base = { key, label, required: false, sort: nextSort() };
   const created = templateFieldSchema.parse(
     type === 'number'
-      ? { ...base, type, unit: 'ml', decimals: 0 }
+      ? // No unit by default. Plenty of these are counts, and a unit that was
+        // guessed for you is a unit that ends up in the record unread.
+        { ...base, type, unit: null, decimals: 0 }
       : type === 'text'
-        ? { ...base, type, multiline: true, maxLength: 2000 }
+        ? { ...base, type, multiline: false, maxLength: 2000 }
         : type === 'checklist'
           ? { ...base, type, items: [{ value: 'item_1', label: 'First item' }] }
           : type === 'single_choice' || type === 'multi_choice'
             ? { ...base, type, options: [{ value: 'option_1', label: 'First option' }] }
-            : { ...base, type },
+            : type === 'info'
+              ? { ...base, type, label: 'Guidance', body: 'Write the guidance here.' }
+              : { ...base, type },
   );
 
   fields.value.push(created);
@@ -192,12 +197,30 @@ function relabelChoice(index: number, label: string): void {
   if (keysEditable.value) choice.value = suggestFieldKey(label) || choice.value;
 }
 
-async function loadPublishPreview(): Promise<void> {
+/**
+ * Publishing is one button now.
+ *
+ * It used to need "Review changes" clicked first, which left the publish button
+ * greyed out with nothing on screen explaining why. The review still happens,
+ * it just happens where it is useful: after you have asked to publish, as the
+ * thing you are confirming.
+ */
+const confirming = ref(false);
+
+async function askToPublish(): Promise<void> {
   if (versionId.value === null) return;
+  error.value = '';
   clearTimeout(saveTimer);
   await save();
+
+  if (problems.value.length > 0) {
+    error.value = 'Fix the problems listed below before publishing.';
+    return;
+  }
+
   try {
     preview.value = await api.getPublishPreview(versionId.value);
+    confirming.value = true;
   } catch (err) {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not work out the changes.';
   }
@@ -212,6 +235,7 @@ async function publish(): Promise<void> {
     await router.push({ name: 'check-templates' });
   } catch (err) {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not publish.';
+    confirming.value = false;
   } finally {
     publishing.value = false;
   }
@@ -227,6 +251,7 @@ const typeLabels: Record<FieldType, string> = {
   date: 'Date',
   time: 'Time',
   datetime: 'Date and time',
+  info: 'Information',
 };
 </script>
 
@@ -249,6 +274,7 @@ const typeLabels: Record<FieldType, string> = {
         <div class="card p-4">
           <div class="flex flex-wrap items-center gap-2">
             <h2 class="text-lg font-semibold">Fields</h2>
+            <FieldTypeGuide />
             <select
               class="field ml-auto max-w-44"
               aria-label="Add a field"
@@ -344,10 +370,33 @@ const typeLabels: Record<FieldType, string> = {
             </p>
           </div>
 
+          <!--
+            Guidance. The body is source text and is rendered by the same code
+            that renders a care plan, so what is typed here reads the same on a
+            phone with no signal.
+          -->
+          <div v-if="current.type === 'info'">
+            <label class="field-label" for="field-body">Guidance</label>
+            <textarea id="field-body" v-model="current.body" class="field min-h-40" />
+            <p class="text-text-secondary mt-1 text-sm">
+              Takes ## headings, - bullets, **bold** and tables. A table is a row of headings, a row
+              of dashes under it, then the rows, each one written | like | this |. It records
+              nothing and never appears in a report.
+            </p>
+          </div>
+
           <div v-if="current.type === 'number'" class="flex flex-wrap gap-3">
             <div>
               <label class="field-label" for="field-unit">Unit</label>
-              <input id="field-unit" v-model="current.unit" class="field max-w-32" type="text" />
+              <input
+                id="field-unit"
+                class="field max-w-32"
+                type="text"
+                placeholder="None"
+                :value="current.unit ?? ''"
+                @input="current.unit = ($event.target as HTMLInputElement).value.trim() || null"
+              />
+              <p class="text-text-secondary mt-1 text-sm">Leave it blank for a plain count.</p>
             </div>
             <div>
               <label class="field-label" for="field-decimals">Decimal places</label>
@@ -419,26 +468,74 @@ const typeLabels: Record<FieldType, string> = {
             </button>
           </div>
 
-          <div v-if="current.type === 'text'">
-            <label class="field-label" for="field-maxlength">Maximum length</label>
-            <input
-              id="field-maxlength"
-              v-model.number="current.maxLength"
-              class="field max-w-32"
-              type="number"
-              min="1"
-            />
+          <template v-if="current.type === 'text'">
+            <div>
+              <span class="field-label">How much room</span>
+              <div class="flex flex-wrap gap-2">
+                <label
+                  class="border-border-default flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3"
+                  :class="current.multiline ? '' : 'bg-primary-subtle text-primary'"
+                >
+                  <input
+                    type="radio"
+                    class="size-5"
+                    :checked="!current.multiline"
+                    @change="current.multiline = false"
+                  />
+                  One line
+                </label>
+                <label
+                  class="border-border-default flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3"
+                  :class="current.multiline ? 'bg-primary-subtle text-primary' : ''"
+                >
+                  <input
+                    type="radio"
+                    class="size-5"
+                    :checked="current.multiline"
+                    @change="current.multiline = true"
+                  />
+                  Several lines
+                </label>
+              </div>
+              <p class="text-text-secondary mt-1 text-sm">
+                One line for a few words. Several only when you are asking for a paragraph.
+              </p>
+            </div>
+
+            <div>
+              <label class="field-label" for="field-maxlength">Maximum length</label>
+              <input
+                id="field-maxlength"
+                v-model.number="current.maxLength"
+                class="field max-w-32"
+                type="number"
+                min="1"
+              />
+            </div>
+          </template>
+
+          <div v-if="current.type === 'time'">
+            <label class="flex min-h-11 items-center gap-2">
+              <input v-model="current.allowMultiple" type="checkbox" class="size-5" />
+              Allow several times
+            </label>
+            <p class="text-text-secondary mt-1 text-sm">
+              For something that can happen more than once inside one check, like a nebuliser given
+              twice in two hours. The worker adds each time as it happens.
+            </p>
           </div>
 
-          <div>
-            <label class="field-label" for="field-help">Help text</label>
-            <input id="field-help" v-model="current.help" class="field" type="text" />
-          </div>
+          <template v-if="current.type !== 'info'">
+            <div>
+              <label class="field-label" for="field-help">Help text</label>
+              <input id="field-help" v-model="current.help" class="field" type="text" />
+            </div>
 
-          <label class="flex min-h-11 items-center gap-2">
-            <input v-model="current.required" type="checkbox" class="size-5" />
-            Required to complete the check
-          </label>
+            <label class="flex min-h-11 items-center gap-2">
+              <input v-model="current.required" type="checkbox" class="size-5" />
+              Required to complete the check
+            </label>
+          </template>
         </div>
       </section>
 
@@ -457,59 +554,97 @@ const typeLabels: Record<FieldType, string> = {
         <div class="card space-y-3 p-4">
           <h2 class="text-lg font-semibold">Publish</h2>
 
+          <p class="text-text-secondary text-sm">
+            Publishing makes this version the one workers fill in. It becomes version
+            {{ (template?.publishedVersion?.version ?? 0) + 1 }} and cannot be edited afterwards.
+            Editing it later starts the next version instead, and every record already entered stays
+            on the version it was recorded against, so nothing that has been written breaks.
+          </p>
+
           <ul v-if="problems.length > 0" class="text-state-missed space-y-1 text-sm">
             <li v-for="(problem, index) in problems" :key="index">
               {{ problem.field ? `${problem.field}: ` : '' }}{{ problem.message }}
             </li>
           </ul>
 
-          <div v-if="preview">
-            <p class="font-medium">What changes</p>
-            <ul class="text-text-secondary mt-1 space-y-1 text-sm">
-              <li v-for="key in preview.diff.added" :key="`a-${key}`">Added {{ key }}</li>
-              <li v-for="key in preview.diff.removed" :key="`r-${key}`">Removed {{ key }}</li>
-              <li v-for="change in preview.diff.relabelled" :key="`l-${change.key}`">
-                Renamed {{ change.key }} from "{{ change.from }}" to "{{ change.to }}"
-              </li>
-              <li v-for="change in preview.diff.changed" :key="`c-${change.key}-${change.what}`">
-                {{ change.key }}: {{ change.what }}
-              </li>
-              <li
-                v-if="
-                  preview.diff.added.length === 0 &&
-                  preview.diff.removed.length === 0 &&
-                  preview.diff.relabelled.length === 0 &&
-                  preview.diff.changed.length === 0
-                "
-              >
-                Nothing has changed since the published version.
-              </li>
-            </ul>
-            <p class="text-text-secondary mt-2 text-sm">
-              Publishing cannot be undone. Records already entered keep the version they were
-              recorded against and are not touched.
-            </p>
-          </div>
-
-          <div class="flex flex-wrap gap-2">
-            <button
-              type="button"
-              class="btn border-border-default border"
-              @click="loadPublishPreview"
-            >
-              Review changes
-            </button>
-            <button
-              type="button"
-              class="btn btn-primary"
-              :disabled="publishing || problems.length > 0 || preview === null"
-              @click="publish"
-            >
-              {{ publishing ? 'Publishing…' : 'Publish this version' }}
-            </button>
-          </div>
+          <button type="button" class="btn btn-primary" @click="askToPublish">
+            Publish this version
+          </button>
         </div>
       </section>
+    </div>
+
+    <!--
+      The confirm. It carries the diff, which is what an admin actually needs at
+      the moment they are deciding, rather than a step they had to complete
+      before the button would work.
+    -->
+    <div
+      v-if="confirming && preview"
+      class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4"
+      @click.self="confirming = false"
+    >
+      <div
+        class="card my-8 w-full max-w-lg space-y-3 p-5"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Publish this version"
+      >
+        <h2 class="text-lg font-semibold">Publish {{ template?.name }}?</h2>
+
+        <div>
+          <p class="font-medium">What changes</p>
+          <ul class="text-text-secondary mt-1 space-y-1 text-sm">
+            <li v-for="key in preview.diff.added" :key="`a-${key}`">Added {{ key }}</li>
+            <li v-for="key in preview.diff.removed" :key="`r-${key}`">Removed {{ key }}</li>
+            <li v-for="change in preview.diff.relabelled" :key="`l-${change.key}`">
+              Renamed {{ change.key }} from "{{ change.from }}" to "{{ change.to }}"
+            </li>
+            <li v-for="change in preview.diff.changed" :key="`c-${change.key}-${change.what}`">
+              {{ change.key }}: {{ change.what }}
+            </li>
+            <li
+              v-if="
+                preview.diff.added.length === 0 &&
+                preview.diff.removed.length === 0 &&
+                preview.diff.relabelled.length === 0 &&
+                preview.diff.changed.length === 0
+              "
+            >
+              Nothing has changed since the published version.
+            </li>
+          </ul>
+        </div>
+
+        <ul v-if="preview.problems.length > 0" class="text-state-missed space-y-1 text-sm">
+          <li v-for="(problem, index) in preview.problems" :key="index">
+            {{ problem.field ? `${problem.field}: ` : '' }}{{ problem.message }}
+          </li>
+        </ul>
+
+        <p class="text-text-secondary text-sm">
+          This cannot be undone. Records already entered keep the version they were recorded against
+          and are not touched.
+        </p>
+
+        <div class="flex flex-wrap gap-2">
+          <button
+            type="button"
+            class="btn btn-primary"
+            :disabled="publishing || preview.problems.length > 0"
+            @click="publish"
+          >
+            {{ publishing ? 'Publishing…' : 'Yes, publish it' }}
+          </button>
+          <button
+            type="button"
+            class="btn border-border-default border"
+            @click="confirming = false"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
