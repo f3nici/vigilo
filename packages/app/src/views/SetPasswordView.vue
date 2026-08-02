@@ -43,10 +43,11 @@ const mismatch = computed(
 const guard = useFormGuard();
 
 const checks = () => [
-  needsText('current-password', currentPassword.value, 'Type your current password.'),
-  needsText('new-password', newPassword.value, 'Choose a new password.'),
-  needs('new-password', problems.value.length === 0, problems.value[0] ?? ''),
-  needs('confirm-password', !mismatch.value, 'The two new passwords do not match.'),
+  needsText('current', currentPassword.value, 'Type the password you were given.'),
+  needsText('new', newPassword.value, 'Choose a new password.'),
+  // The list under the field already spells each one out. This names the field.
+  needs('new', problems.value.length === 0, 'That password does not meet the rules below it.'),
+  needs('confirm', !mismatch.value, 'The two new passwords do not match.'),
 ];
 
 async function submit(): Promise<void> {
@@ -86,7 +87,7 @@ async function submit(): Promise<void> {
         can use Vigilo. Use at least {{ MIN_PASSWORD_LENGTH }} characters.
       </p>
 
-      <FormError :message="error" />
+      <FormError :message="guard.problem.value?.message ?? error" />
 
       <div>
         <label class="field-label" for="current">Current password</label>
@@ -96,8 +97,9 @@ async function submit(): Promise<void> {
           class="field"
           type="password"
           autocomplete="current-password"
-          required
           :disabled="busy"
+          :aria-invalid="guard.invalid('current')"
+          @input="guard.clear()"
         />
       </div>
 
@@ -109,8 +111,9 @@ async function submit(): Promise<void> {
           class="field"
           type="password"
           autocomplete="new-password"
-          required
           :disabled="busy"
+          :aria-invalid="guard.invalid('new')"
+          @input="guard.clear()"
         />
         <ul v-if="problems.length" class="mt-2 space-y-1 text-sm">
           <li v-for="problem in problems" :key="problem" :style="{ color: 'var(--vigilo-missed)' }">
@@ -127,8 +130,9 @@ async function submit(): Promise<void> {
           class="field"
           type="password"
           autocomplete="new-password"
-          required
           :disabled="busy"
+          :aria-invalid="guard.invalid('confirm')"
+          @input="guard.clear()"
         />
         <p v-if="mismatch" class="mt-2 text-sm" :style="{ color: 'var(--vigilo-missed)' }">
           The two passwords do not match.

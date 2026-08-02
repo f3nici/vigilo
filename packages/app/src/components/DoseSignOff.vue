@@ -185,7 +185,15 @@ async function save(): Promise<void> {
 
     <label v-if="isPrn" class="block space-y-1">
       <span class="field-label">Why it was given</span>
-      <textarea v-model="reason" rows="2" class="field" maxlength="2000" required />
+      <textarea
+        id="dose-reason"
+        v-model="reason"
+        rows="2"
+        class="field"
+        maxlength="2000"
+        :aria-invalid="guard.invalid('dose-reason')"
+        @input="guard.clear()"
+      />
     </label>
 
     <label class="block space-y-1">
@@ -222,7 +230,7 @@ async function save(): Promise<void> {
       </span>
     </label>
 
-    <FormError :message="error" />
+    <FormError :message="guard.problem.value?.message ?? error" />
 
     <p v-if="problem" class="text-state-missed text-sm">{{ problem }}</p>
     <p v-else-if="prnReasonMissing" class="text-text-secondary text-sm">Say why this was given.</p>
