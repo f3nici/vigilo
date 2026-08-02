@@ -219,6 +219,51 @@ export const assignmentSchema = z.object({
 
 export type ParticipantAssignment = z.infer<typeof assignmentSchema>;
 
+/**
+ * Somebody who could be on a participant's support team (D87).
+ *
+ * A name and a role and nothing else, deliberately. Picking who supports a
+ * person needs the name they are known by; it does not need their email, their
+ * account status or whether they are currently locked out, and the full user
+ * list carries all three. Built as its own shape rather than filtered from
+ * `UserSummary`, so a field added there cannot arrive here.
+ *
+ * This is what lets a team leader use the screen at all. Listing accounts is
+ * admin-only, which left them able to grant access without being able to see
+ * who to grant it to.
+ */
+export const assignableStaffSchema = z.object({
+  id: z.string().uuid(),
+  displayName: z.string(),
+  role: roleSchema,
+  /** Whether they are on the team right now, so the tick box knows its state. */
+  assigned: z.boolean(),
+  /**
+   * Set when the current grant is temporary. The tick box is for ongoing
+   * membership, and unticking one of these would silently end a shift cover
+   * somebody arranged, so the screen says so instead.
+   */
+  temporaryUntil: z.string().nullable(),
+});
+
+export type AssignableStaff = z.infer<typeof assignableStaffSchema>;
+
+/** The whole team in one write, so a house can be set up in one go. */
+export const setSupportTeamRequestSchema = z
+  .object({ userIds: z.array(z.string().uuid()).max(200) })
+  .strict();
+
+export type SetSupportTeamRequest = z.infer<typeof setSupportTeamRequestSchema>;
+
+export const supportTeamChangeSchema = z.object({
+  added: z.array(z.string()),
+  removed: z.array(z.string()),
+  /** Named so the screen can say why a temporary grant was left alone. */
+  keptTemporary: z.array(z.string()),
+});
+
+export type SupportTeamChange = z.infer<typeof supportTeamChangeSchema>;
+
 export const createAssignmentRequestSchema = z
   .object({
     userId: z.string().uuid(),

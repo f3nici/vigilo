@@ -11,6 +11,7 @@ import { loadConfig, type Config } from '../src/config.js';
 import { createLogger } from '../src/logger.js';
 import { createDatabase, type Database } from '../src/db/client.js';
 import { provisionAppRole, runMigrations } from '../src/db/migrate.js';
+import { invalidateOrgSettings } from '../src/services/org.js';
 import { blindIndex, KeyRing } from '../src/crypto/keys.js';
 import { hashPassword } from '../src/crypto/passwords.js';
 import { encryptField } from '../src/crypto/fields.js';
@@ -100,6 +101,12 @@ export async function createHarness(): Promise<Harness> {
  * Wipes everything the identity tests touch. The audit log has no DELETE grant
  * for the app role, so this runs as the owner.
  */
+/**
+ * The timezone every test in this repository is written against. Melbourne
+ * because it has daylight saving, which is where window arithmetic breaks.
+ */
+export const TEST_TIME_ZONE = 'Australia/Melbourne';
+
 export async function resetData(ownerDb: Database): Promise<void> {
   await ownerDb.execute(sql`
     truncate table
@@ -184,6 +191,21 @@ export async function resetData(ownerDb: Database): Promise<void> {
       ('other', 'Other', 'slate', 80)
     on conflict (slug) do update set active = true
   `);
+
+  /*
+   * The org timezone, set explicitly rather than left to the column default.
+   *
+   * Every window time, every "daily" boundary and every assertion about clock
+   * hours in this suite is decided by it. Leaving it to the default meant the
+   * whole suite quietly changed meaning the day the default moved from
+   * Melbourne to Perth (D84), which is exactly what happened. `TEST_TIME_ZONE`
+   * is what the tests mean; the product's default is a separate question and
+   * has its own test.
+   */
+  await ownerDb.execute(sql`
+    update org_settings set timezone = ${TEST_TIME_ZONE} where id = 1
+  `);
+  invalidateOrgSettings();
 }
 
 /** The vent observation form the documents use, ready to publish. */
@@ -241,6 +263,7 @@ export type SeededUser = {
   id: string;
   email: string;
   role: Role;
+  displayName: string;
   password: string;
   /** Set when the account is enrolled, so tests can answer the challenge. */
   totpSecret: string | null;
@@ -252,6 +275,11 @@ export async function seedUser(
   options: {
     role: Role;
     email?: string;
+    /**
+     * Defaults to `Test <role>`, which most tests assert against. Set it when a
+     * test seeds two of the same role and has to tell them apart.
+     */
+    displayName?: string;
     password?: string;
     mustChangePassword?: boolean;
     participantId?: string | null;
@@ -265,6 +293,7 @@ export async function seedUser(
 ): Promise<SeededUser> {
   const password = options.password ?? TEST_PASSWORD;
   const email = options.email ?? `${options.role}-${randomUUID().slice(0, 8)}@example.org`;
+  const displayName = options.displayName ?? `Test ${options.role}`;
   const enrolled = options.totpEnabled ?? totpRequired(options.role);
   const secret = enrolled ? generateTotpSecret() : null;
 
@@ -272,7 +301,7 @@ export async function seedUser(
     .insert(users)
     .values({
       email,
-      displayName: `Test ${options.role}`,
+      displayName,
       role: options.role,
       participantId: options.participantId ?? null,
       passwordHash: await hashPassword(password),
@@ -285,7 +314,7 @@ export async function seedUser(
     })
     .returning();
 
-  return { id: row!.id, email, role: options.role, password, totpSecret: secret };
+  return { id: row!.id, email, role: options.role, displayName, password, totpSecret: secret };
 }
 
 export type SignedIn = {

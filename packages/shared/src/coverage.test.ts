@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ROUND_THE_CLOCK,
   coverageRangeSchema,
   describeCoverageDecision,
   endOfDayMinutes,
+  isRoundTheClock,
   resolveCoverage,
   type CoverageExceptionRow,
   type CoverageRangeRow,
@@ -250,5 +252,53 @@ describe('midnight', () => {
     expect(endOfDayMinutes('00:00')).toBe(1440);
     expect(endOfDayMinutes('24:00')).toBe(1440);
     expect(endOfDayMinutes('19:00')).toBe(1140);
+  });
+});
+
+describe('round the clock', () => {
+  it('is seven days of midnight to midnight', () => {
+    expect(ROUND_THE_CLOCK).toHaveLength(7);
+    expect(ROUND_THE_CLOCK.map((range) => range.weekday).sort()).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(isRoundTheClock(ROUND_THE_CLOCK)).toBe(true);
+  });
+
+  it('is a pattern the schema accepts', () => {
+    // 00:00 to 00:00 has to survive the "ends after it starts" refinement, or
+    // the checkbox writes something that cannot be saved.
+    for (const range of ROUND_THE_CLOCK) {
+      expect(coverageRangeSchema.safeParse(range).success).toBe(true);
+    }
+  });
+
+  it('expects a window at any hour of any day', () => {
+    const rows: CoverageRangeRow[] = ROUND_THE_CLOCK.map((range) => ({
+      ...range,
+      activeFrom: '2020-01-01',
+      activeTo: null,
+    }));
+    // Sunday 03:00 to 05:00, the hour a partial pattern is most likely to miss.
+    expect(resolveCoverage(window('2026-08-02', 180, 300), rows, [], MELBOURNE).expected).toBe(
+      true,
+    );
+  });
+
+  it('is not round the clock when a day is missing or a day is short', () => {
+    expect(isRoundTheClock(ROUND_THE_CLOCK.slice(1))).toBe(false);
+    expect(
+      isRoundTheClock([
+        ...ROUND_THE_CLOCK.slice(1),
+        { weekday: 0, startTime: '00:00', endTime: '23:00' },
+      ]),
+    ).toBe(false);
+  });
+
+  it('is not round the clock when there is no pattern at all', () => {
+    /*
+     * An empty pattern behaves as always covered, and that is deliberate (a
+     * participant nobody has configured yet gets expected windows). It is still
+     * not the same fact: one is a decision somebody made and the other is a
+     * blank, and the checkbox must not claim the blank is a decision.
+     */
+    expect(isRoundTheClock([])).toBe(false);
   });
 });

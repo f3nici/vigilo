@@ -114,7 +114,19 @@ describe('reports', () => {
         },
       ],
     });
-    await materialiseParticipant(h.db, participantId, addDays(today(), -3), today());
+    /*
+     * Laid as of the first day in the range. The materialiser refuses to lay a
+     * window that has already closed (D85), so a test that needs history says
+     * when it is pretending to be.
+     */
+    const gridFrom = addDays(today(), -3);
+    await materialiseParticipant(
+      h.db,
+      participantId,
+      gridFrom,
+      today(),
+      new Date(`${gridFrom}T00:00:00Z`),
+    );
   }
 
   /**
@@ -648,7 +660,13 @@ describe('reports', () => {
         })
         .expect(201);
 
-      await materialiseParticipant(h.db, fixture.participantId, from, today());
+      await materialiseParticipant(
+        h.db,
+        fixture.participantId,
+        from,
+        today(),
+        new Date(`${from}T00:00:00Z`),
+      );
 
       // An entry against every closed window, straight in, so the timing is
       // about reading a month rather than about writing one.

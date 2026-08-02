@@ -1,7 +1,9 @@
 import {
   alertSchema,
   apiErrorSchema,
+  assignableStaffSchema,
   assignmentSchema,
+  supportTeamChangeSchema,
   attachmentSchema,
   checkScheduleSchema,
   checkTemplateSchema,
@@ -46,7 +48,9 @@ import {
   type CoverageException,
   type CoveragePattern,
   type CreateAlertRequest,
+  type AssignableStaff,
   type CreateAssignmentRequest,
+  type SupportTeamChange,
   type CreateContactRequest,
   type CreateAttachmentRequest,
   type CreateCoverageExceptionRequest,
@@ -476,6 +480,25 @@ export async function revokeAssignment(assignmentId: string): Promise<Participan
   return z
     .object({ assignment: assignmentSchema })
     .parse(await request(`/v1/assignments/${assignmentId}`, { method: 'DELETE' })).assignment;
+}
+
+/** The support team (D87): who could be on it, and setting the whole list. */
+export async function listSupportTeam(participantId: string): Promise<AssignableStaff[]> {
+  return z
+    .object({ staff: z.array(assignableStaffSchema) })
+    .parse(await request(`/v1/participants/${participantId}/support-team`)).staff;
+}
+
+export async function setSupportTeam(
+  participantId: string,
+  userIds: string[],
+): Promise<{ change: SupportTeamChange; staff: AssignableStaff[] }> {
+  return z.object({ change: supportTeamChangeSchema, staff: z.array(assignableStaffSchema) }).parse(
+    await request(`/v1/participants/${participantId}/support-team`, {
+      method: 'PUT',
+      body: { userIds },
+    }),
+  );
 }
 
 // Check templates (doc 04 §5).

@@ -120,7 +120,19 @@ describe('sync', () => {
       // Two days back as well as forward. "Today" in Melbourne can be an hour
       // old when the suite runs, and a test that needs a closed window would
       // then find none, which is a fact about the clock rather than the code.
-      await materialiseParticipant(h.db, id, addDays(today(), -2), addDays(today(), 1));
+      /*
+       * Laid as of the first day in the range. The materialiser refuses to lay
+       * a window that has already closed (D85), so a test that needs history
+       * says when it is pretending to be.
+       */
+      const gridFrom = addDays(today(), -2);
+      await materialiseParticipant(
+        h.db,
+        id,
+        gridFrom,
+        addDays(today(), 1),
+        new Date(`${gridFrom}T00:00:00Z`),
+      );
     }
 
     const workerUser = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });

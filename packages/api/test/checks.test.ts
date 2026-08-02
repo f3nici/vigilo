@@ -300,6 +300,79 @@ describe('checks', () => {
       expect(response.body.error.message).toContain('has not been published');
     });
 
+    /*
+     * D85, and the same rule doses have had since D59. Before this, a schedule
+     * saved in the afternoon produced a morning of windows nobody could have
+     * recorded, and the closer marked every one of them missed within the hour.
+     */
+    it('never lays a window that has already closed', async () => {
+      const { admin, participantId, templateId } = await setUp();
+
+      await api(admin, 'post', `/api/v1/participants/${participantId}/schedules`).send({
+        templateId,
+        name: 'Vent observations',
+        activeFrom: today(),
+        segments: DAY_AND_NIGHT,
+      });
+
+      const windows = await api(admin, 'get', `/api/v1/participants/${participantId}/windows`);
+      const closed = windows.body.windows.filter(
+        (window: { endsAt: string }) => new Date(window.endsAt) <= new Date(),
+      );
+
+      expect(closed).toEqual([]);
+      expect(windows.body.windows.length).toBeGreaterThan(0);
+    });
+
+    it('still lays the window that is open right now', async () => {
+      // A worker is standing there and can record it. Skipping it would lose a
+      // check that could genuinely be done.
+      const { participantId, templateId, admin } = await setUp();
+
+      await api(admin, 'post', `/api/v1/participants/${participantId}/schedules`).send({
+        templateId,
+        name: 'Round the clock',
+        activeFrom: today(),
+        segments: [
+          {
+            label: 'All day',
+            windowMinutes: 120,
+            anchorTime: '00:00',
+            appliesFromTime: '00:00',
+            appliesToTime: '00:00',
+          },
+        ],
+      });
+
+      const windows = await api(admin, 'get', `/api/v1/participants/${participantId}/windows`);
+      const now = Date.now();
+      const open = windows.body.windows.filter(
+        (window: { startsAt: string; endsAt: string }) =>
+          new Date(window.startsAt).getTime() <= now && new Date(window.endsAt).getTime() > now,
+      );
+
+      expect(open).toHaveLength(1);
+    });
+
+    it('counts what it skipped, so a job run says so rather than looking empty', async () => {
+      const { participantId, templateId, admin } = await setUp();
+      const yesterday = addDays(today(), -1);
+
+      await api(admin, 'post', `/api/v1/participants/${participantId}/schedules`).send({
+        templateId,
+        name: 'Vent observations',
+        activeFrom: yesterday,
+        segments: DAY_AND_NIGHT,
+      });
+
+      // A day wholly in the past: everything is skipped and nothing is
+      // created, and the two numbers say which of those happened.
+      const result = await materialiseParticipant(h.db, participantId, yesterday, yesterday);
+
+      expect(result.created).toBe(0);
+      expect(result.skippedAlreadyClosed).toBeGreaterThan(0);
+    });
+
     it('is idempotent, so the materialiser never doubles the grid', async () => {
       const { admin, participantId, templateId } = await setUp();
 
@@ -637,7 +710,19 @@ describe('checks', () => {
         ],
       });
 
-      await materialiseParticipant(h.db, fixture.participantId, yesterday, yesterday);
+      /*
+       * `now` set to the start of that day. The materialiser refuses to lay a
+       * window that has already closed (D85), which is the point of D85, so a
+       * test that needs a closed window has to say when it is pretending to be
+       * rather than reach around the rule.
+       */
+      await materialiseParticipant(
+        h.db,
+        fixture.participantId,
+        yesterday,
+        yesterday,
+        new Date(`${yesterday}T00:00:00Z`),
+      );
       await closeWindows(h.db);
 
       const windows = await api(
@@ -1143,7 +1228,15 @@ describe('checks', () => {
         activeFrom: yesterday,
         segments: DAY_AND_NIGHT,
       });
-      await materialiseParticipant(h.db, participantId, yesterday, addDays(today(), 7));
+      // From yesterday, so the scenario has a missed window to account for.
+      // D85 means the grid has to be laid as it stood then rather than now.
+      await materialiseParticipant(
+        h.db,
+        participantId,
+        yesterday,
+        addDays(today(), 7),
+        new Date(`${yesterday}T00:00:00Z`),
+      );
       await closeWindows(h.db);
 
       const workerUser = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });

@@ -55,7 +55,10 @@ wins.
   for a dose nobody was asked for.
 - **Windows are generated server-side only.** Devices never create them. The
   grid is fixed and admin-configured (anchor time, window length, segments per
-  time of day). It never rolls forward from the last recorded check.
+  time of day). It never rolls forward from the last recorded check, and
+  **never lays a window that has already closed** (D85, the same rule as D59
+  for doses). A test that needs a historical window passes `now` to
+  `materialiseParticipant` and says when it is pretending to be.
 - **Nothing outside `packages/app/src/platform` may reference OPFS, WebAuthn,
   Web Push or Capacitor directly.** That rule is what makes the native phases an
   adapter swap rather than a rewrite. Worth a lint rule.
@@ -160,6 +163,13 @@ service container.
   rather than testing the type inline.
 - **Incidents never reach a device** (D67) and are never visible to a
   participant account, refused in the service rather than hidden in the UI.
+- **The org timezone comes from `ORG_TIMEZONE`** (default `Australia/Perth`)
+  and is applied only while `updated_at = created_at` on the settings row
+  (D84). The app reads `session.timeZone` and nothing hardcodes a zone: there
+  were fifteen `'Australia/Melbourne'` fallbacks and they were fifteen chances
+  to disagree with the server about what day it is. The API test harness sets
+  `TEST_TIME_ZONE` explicitly, so the suite does not quietly change meaning
+  when the product default moves.
 - **A self-access account reaches `/auth` and three `/me` paths and nothing
   else** (D70). The allow-list is `SELF_ACCESS_ALLOWED` in
   `packages/api/src/middleware/principal.ts`, applied once above every router,

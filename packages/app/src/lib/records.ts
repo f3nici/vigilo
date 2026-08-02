@@ -75,7 +75,7 @@ export async function readToday(): Promise<{
       // The org timezone travels with the session, not with the records: it is
       // one setting for the whole organisation and it is what every timestamp
       // is shown in (doc 06 §7).
-      timeZone: useSessionStore().org?.timezone ?? 'Australia/Melbourne',
+      timeZone: useSessionStore().timeZone,
       source: 'local',
     };
   }

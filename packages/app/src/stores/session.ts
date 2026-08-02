@@ -28,6 +28,22 @@ export const useSessionStore = defineStore('session', () => {
   const isAuthenticated = computed(() => principal.value !== null);
 
   /**
+   * The organisation's timezone, and the only place the app decides what to do
+   * without one (doc 06 §7, D84).
+   *
+   * Every screen used to carry its own hardcoded fallback, and there were
+   * fifteen of them. That is not a fallback, it is fifteen chances to disagree
+   * with the server about what day it is. The server sends the real zone with
+   * every `/me`; this covers the moment before that lands.
+   *
+   * UTC rather than a guess at somewhere plausible. A wrong-but-plausible zone
+   * shows a confident time that is quietly two hours out, which is exactly the
+   * failure this replaced. UTC is visibly not local, and it is only ever on
+   * screen for the instant before the session loads.
+   */
+  const timeZone = computed(() => org.value?.timezone ?? 'UTC');
+
+  /**
    * What the user must resolve before anything else is allowed. The API
    * enforces this too; this is so the UI takes them there rather than showing
    * a wall of errors.
@@ -157,6 +173,7 @@ export const useSessionStore = defineStore('session', () => {
     org,
     loaded,
     isAuthenticated,
+    timeZone,
     pendingStep,
     refresh,
     ensureLoaded,

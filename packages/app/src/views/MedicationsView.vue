@@ -6,6 +6,7 @@ import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 import { formatDate } from '@/lib/format';
+import { useSessionStore } from '@/stores/session';
 
 /**
  * The medication chart, for an admin or a nurse (doc 01 §7.2).
@@ -18,6 +19,8 @@ import { formatDate } from '@/lib/format';
  * end date, so the doses already signed off against it stay readable and the
  * record of what somebody was taking in March stays true in June.
  */
+
+const session = useSessionStore();
 const route = useRoute();
 const participantId = computed(() => String(route.params.id));
 
@@ -42,7 +45,7 @@ function blankForm() {
     instructions: '',
     isPrn: false,
     requiresWitness: false,
-    startDate: localDateOf(new Date(), 'Australia/Melbourne'),
+    startDate: localDateOf(new Date(), session.timeZone),
     endDate: '',
   };
 }
@@ -123,7 +126,7 @@ async function stop(medication: Medication): Promise<void> {
   try {
     await api.updateMedication(medication.id, {
       active: false,
-      endDate: localDateOf(new Date(), 'Australia/Melbourne'),
+      endDate: localDateOf(new Date(), session.timeZone),
     });
     await load();
   } catch (err) {

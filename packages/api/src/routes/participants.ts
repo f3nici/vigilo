@@ -8,6 +8,7 @@ import {
   canWriteEmergencyPlan,
   createAlertRequestSchema,
   createAssignmentRequestSchema,
+  setSupportTeamRequestSchema,
   createContactRequestSchema,
   createParticipantRequestSchema,
   ndisNumberSchema,
@@ -37,7 +38,12 @@ import {
   putEmergencyPlan,
   updateContact,
 } from '../services/contacts.js';
-import { grantAssignment, listAssignments } from '../services/assignments.js';
+import {
+  grantAssignment,
+  listAssignableStaff,
+  listAssignments,
+  setSupportTeam,
+} from '../services/assignments.js';
 import { assertInScope } from '../services/scope.js';
 import { recordParticipantView } from '../services/audit.js';
 import {
@@ -337,6 +343,43 @@ export function participantRoutes(db: Database, keyRing: KeyRing): Router {
       const request = createAssignmentRequestSchema.parse(req.body);
       const assignment = await grantAssignment(db, id, request, principal.user.id, req.auditActor);
       res.status(201).json({ assignment });
+    }),
+  );
+
+  /*
+   * The support team (D87). Who could be on it, and setting the whole ongoing
+   * list in one write.
+   *
+   * Behind `grantAccess` rather than admin-only, which is what makes the screen
+   * usable by a team leader: they have always been allowed to grant access and
+   * have never been able to see who to grant it to.
+   */
+  router.get(
+    '/:id/support-team',
+    grantAccess,
+    asyncHandler(async (req, res) => {
+      const id = scoped(req);
+      await findParticipant(db, id);
+      res.json({ staff: await listAssignableStaff(db, id) });
+    }),
+  );
+
+  router.put(
+    '/:id/support-team',
+    grantAccess,
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      const id = scoped(req);
+      await findParticipant(db, id);
+      const request = setSupportTeamRequestSchema.parse(req.body);
+      const change = await setSupportTeam(
+        db,
+        id,
+        request.userIds,
+        principal.user.id,
+        req.auditActor,
+      );
+      res.json({ change, staff: await listAssignableStaff(db, id) });
     }),
   );
 

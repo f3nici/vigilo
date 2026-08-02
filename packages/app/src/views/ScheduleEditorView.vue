@@ -15,6 +15,7 @@ import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 import { needsChoice, needsText, useFormGuard } from '@/lib/forms';
+import { useSessionStore } from '@/stores/session';
 
 /**
  * The schedule editor (doc 06 §5).
@@ -27,6 +28,8 @@ import { needsChoice, needsText, useFormGuard } from '@/lib/forms';
  * Overlapping segments are a hard error. Gaps, uneven division and a
  * misaligned anchor are warnings, because each can be exactly what was meant.
  */
+
+const session = useSessionStore();
 const route = useRoute();
 
 const participantId = computed(() => route.params.id as string);
@@ -42,11 +45,11 @@ const notice = ref('');
 const editingId = ref<string | null>(null);
 const templateId = ref('');
 const name = ref('');
-const activeFrom = ref(localDateOf(new Date(), 'Australia/Melbourne'));
+const activeFrom = ref(localDateOf(new Date(), session.timeZone));
 const segments = ref<SegmentInput[]>([]);
 
 const preview = ref<SchedulePreview | null>(null);
-const previewDate = ref(localDateOf(new Date(), 'Australia/Melbourne'));
+const previewDate = ref(localDateOf(new Date(), session.timeZone));
 
 const publishedTemplates = computed(() =>
   templates.value.filter((template) => template.publishedVersion !== null),

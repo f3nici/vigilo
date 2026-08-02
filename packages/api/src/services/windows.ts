@@ -121,17 +121,30 @@ export async function toCheckEntry(
  * window it already made. Coverage is resolved at insert, and changing coverage
  * later is a separate, previewed and audited recalculation rather than
  * something a background job does silently.
+ *
+ * **Never lays a window that has already closed** (D85), the same rule doses
+ * have had since D59. The materialiser works in whole local days, so a schedule
+ * saved at 3pm on a 06:00 to 22:00 grid would otherwise produce five windows
+ * for this morning that nobody could ever have recorded, and the closer marks
+ * every one of them missed within the hour. A missed check is a statement that
+ * staff did not do something they were asked to do, and nobody was asked for
+ * these: the schedule did not exist yet.
+ *
+ * A window still open is created, because a worker is there and can still
+ * record it. Nothing is lost either way, since the grid runs seven days ahead.
  */
 export async function materialiseParticipant(
   db: Database,
   participantId: string,
   fromDate: string,
   toDate: string,
-): Promise<{ created: number; skippedUnpublished: number }> {
+  now = new Date(),
+): Promise<{ created: number; skippedUnpublished: number; skippedAlreadyClosed: number }> {
   const coverage = await loadCoverage(db, participantId);
 
   let created = 0;
   let skippedUnpublished = 0;
+  let skippedAlreadyClosed = 0;
   const versionCache = new Map<string, string | null>();
 
   for (let date = fromDate; date <= toDate; date = addDays(date, 1)) {
@@ -152,7 +165,9 @@ export async function materialiseParticipant(
         continue;
       }
 
-      const grid = generateDayWindows(segments.map(toSegmentInput), date, coverage.timeZone);
+      const wholeDay = generateDayWindows(segments.map(toSegmentInput), date, coverage.timeZone);
+      const grid = wholeDay.filter((window) => window.endsAt > now);
+      skippedAlreadyClosed += wholeDay.length - grid.length;
       if (grid.length === 0) continue;
 
       const rows = grid.map((window) => {
@@ -188,14 +203,19 @@ export async function materialiseParticipant(
     }
   }
 
-  return { created, skippedUnpublished };
+  return { created, skippedUnpublished, skippedAlreadyClosed };
 }
 
 /** Every participant with an active schedule, over the rolling horizon. */
 export async function materialiseHorizon(
   db: Database,
   days = HORIZON_DAYS,
-): Promise<{ participants: number; created: number; skippedUnpublished: number }> {
+): Promise<{
+  participants: number;
+  created: number;
+  skippedUnpublished: number;
+  skippedAlreadyClosed: number;
+}> {
   const org = await getOrgSettings(db);
   const today = localDateOf(new Date(), org.timezone);
   const until = addDays(today, days);
@@ -208,14 +228,16 @@ export async function materialiseHorizon(
 
   let created = 0;
   let skippedUnpublished = 0;
+  let skippedAlreadyClosed = 0;
 
   for (const row of rows) {
     const result = await materialiseParticipant(db, row.participantId, today, until);
     created += result.created;
     skippedUnpublished += result.skippedUnpublished;
+    skippedAlreadyClosed += result.skippedAlreadyClosed;
   }
 
-  return { participants: rows.length, created, skippedUnpublished };
+  return { participants: rows.length, created, skippedUnpublished, skippedAlreadyClosed };
 }
 
 /**

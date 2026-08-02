@@ -16,6 +16,7 @@ import FormError from '@/components/FormError.vue';
 import { ApiRequestError } from '@/api/client';
 import { readDueDoses, readToday } from '@/lib/records';
 import { useOfflineStore } from '@/stores/offline';
+import { useSessionStore } from '@/stores/session';
 
 /**
  * Today (doc 06 §3).
@@ -27,13 +28,15 @@ import { useOfflineStore } from '@/stores/offline';
  * Not-expected windows are shown greyed rather than hidden, so the record
  * visibly accounts for the gap instead of quietly omitting it.
  */
+
+const session = useSessionStore();
 const offline = useOfflineStore();
 
 const windows = ref<CheckWindow[]>([]);
 const doses = ref<MedicationDose[]>([]);
 const signingOff = ref<MedicationDose | null>(null);
 const participants = ref<ParticipantSummary[]>([]);
-const timeZone = ref('Australia/Melbourne');
+const timeZone = ref(session.timeZone);
 const loading = ref(true);
 const error = ref('');
 
