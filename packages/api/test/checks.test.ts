@@ -356,18 +356,24 @@ describe('checks', () => {
 
     it('counts what it skipped, so a job run says so rather than looking empty', async () => {
       const { participantId, templateId, admin } = await setUp();
-      const yesterday = addDays(today(), -1);
+      /*
+       * Three days back, not yesterday. `DAY_AND_NIGHT` has an overnight
+       * segment running to 07:00, so yesterday's grid is still partly open
+       * when the suite runs just after midnight, and three of its windows are
+       * correctly created. Same trap the lateness tests already document.
+       */
+      const wellPast = addDays(today(), -3);
 
       await api(admin, 'post', `/api/v1/participants/${participantId}/schedules`).send({
         templateId,
         name: 'Vent observations',
-        activeFrom: yesterday,
+        activeFrom: wellPast,
         segments: DAY_AND_NIGHT,
       });
 
       // A day wholly in the past: everything is skipped and nothing is
       // created, and the two numbers say which of those happened.
-      const result = await materialiseParticipant(h.db, participantId, yesterday, yesterday);
+      const result = await materialiseParticipant(h.db, participantId, wellPast, wellPast);
 
       expect(result.created).toBe(0);
       expect(result.skippedAlreadyClosed).toBeGreaterThan(0);
