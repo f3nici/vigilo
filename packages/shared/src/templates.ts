@@ -481,9 +481,17 @@ export function formatFieldValue(
 
   if (value.json !== null && value.json !== undefined) {
     const chosen = Array.isArray(value.json) ? value.json : [value.json];
-    // Several times read as times, not as a choice list: nothing resolves them
-    // to a label, and the comma is what tells 09:10 from 14:30.
-    if (field?.type === 'time') return chosen.join(', ');
+    /*
+     * Several times read as times, not as a choice list: nothing resolves them
+     * to a label, and the comma is what tells 09:10 from 14:30.
+     *
+     * Sorted here rather than trusted from storage. The app adds them in clock
+     * order, but a replayed outbox row or anything else posting to the API can
+     * store them in the order they were typed, and a record that reads "15:30,
+     * 09:10" invites the reader to work out which came first. `HH:MM` sorts
+     * lexicographically as it sorts chronologically.
+     */
+    if (field?.type === 'time') return [...chosen].sort().join(', ');
     return chosen.map((one) => choiceLabel(field, one)).join(', ');
   }
 

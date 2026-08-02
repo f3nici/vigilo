@@ -362,6 +362,37 @@ describe('several times on one field', () => {
     expect(formatFieldValue(nebs.fields[0], { json: ['09:10', '10:40'] })).toBe('09:10, 10:40');
   });
 
+  it('reads in clock order whatever order it was stored in', () => {
+    /*
+     * The app adds them in clock order, but the API stores what it is sent, and
+     * a replayed outbox row can arrive any way round. The released image did
+     * exactly this. A record reading "15:30, 09:10" makes the reader work out
+     * which came first.
+     */
+    expect(formatFieldValue(nebs.fields[0], { json: ['15:30', '09:10'] })).toBe('09:10, 15:30');
+  });
+
+  it('leaves a choice list in the order it was recorded', () => {
+    // Only times are re-ordered. A checklist's order is the form's order.
+    const cares = templateSchemaSchema.parse({
+      fields: [
+        {
+          key: 'cares',
+          label: 'Cares',
+          type: 'checklist',
+          sort: 10,
+          items: [
+            { value: 'mouth_care', label: 'Mouth care' },
+            { value: 'repositioned', label: 'Repositioned' },
+          ],
+        },
+      ],
+    });
+    expect(formatFieldValue(cares.fields[0], { json: ['repositioned', 'mouth_care'] })).toBe(
+      'Repositioned, Mouth care',
+    );
+  });
+
   it('names the change when a form starts taking several', () => {
     const before = templateSchemaSchema.parse({
       fields: [{ key: 'neb_times', label: 'Nebuliser given at', type: 'time', sort: 10 }],
