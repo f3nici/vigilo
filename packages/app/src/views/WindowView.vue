@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import {
+  checkEntrySchema,
   describeWindowStatus,
   missReasonProblem,
   missingRequiredKeys,
@@ -83,6 +84,25 @@ const remaining = computed(() => missingRequiredKeys(schema.value, dirtyValues.v
 const isClosed = computed(
   () => detail.value !== null && new Date(detail.value.endsAt) <= new Date(),
 );
+
+/**
+ * The recorded entry, when the shape is one this build understands.
+ *
+ * `entry` is typed loosely on the wire because a device holds it sealed and
+ * this screen is not the only reader. Parsing it here rather than reaching into
+ * it means an entry saved by an older build renders without the attribution
+ * instead of throwing on the way in.
+ */
+const entry = computed(() => {
+  const parsed = checkEntrySchema.safeParse(detail.value?.entry);
+  return parsed.success ? parsed.data : null;
+});
+
+const recordedByName = computed(
+  () => entry.value?.recordedByName ?? detail.value?.recordedByName ?? 'someone',
+);
+const recordedAt = computed(() => entry.value?.recordedAt ?? null);
+const editCount = computed(() => entry.value?.editCount ?? 0);
 
 const needsReason = computed(
   () =>
@@ -385,6 +405,18 @@ function describeRevisionValue(value: unknown): string {
       <section v-if="detail.entryId" class="card p-4">
         <div class="flex flex-wrap items-center gap-2">
           <h2 class="text-lg font-semibold">Record</h2>
+          <!--
+            Who filled it in and when. A handover reads better for knowing
+            whether the person who recorded something is still on shift, and an
+            entry with nobody's name on it is the thing an auditor asks about.
+          -->
+          <p class="text-text-secondary text-sm">
+            Recorded by {{ recordedByName
+            }}<span v-if="recordedAt"> at {{ formatDateTime(recordedAt) }}</span
+            ><span v-if="editCount > 0">
+              · edited {{ editCount }} {{ editCount === 1 ? 'time' : 'times' }}</span
+            >
+          </p>
           <button
             type="button"
             class="btn border-border-default ml-auto border"

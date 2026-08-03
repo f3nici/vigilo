@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
-import { canManageTemplates, type CheckTemplate } from '@vigilo/shared';
+import {
+  canManageTemplates,
+  checkFormExportSchema,
+  type CheckFormExport,
+  type CheckTemplate,
+  type ImportedForm,
+} from '@vigilo/shared';
 import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
@@ -43,6 +49,102 @@ onMounted(load);
 
 const guard = useFormGuard();
 
+/* ------------------------------------------------------- export and import */
+
+const fileInput = ref<HTMLInputElement | null>(null);
+const exporting = ref(false);
+const importing = ref(false);
+const imported = ref<ImportedForm[]>([]);
+
+const busy = computed(() => exporting.value || importing.value);
+
+/** Hands the browser a file without leaving the page. */
+function download(document_: CheckFormExport, filename: string): void {
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(document_, null, 2)], { type: 'application/json' }),
+  );
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+/** Safe in a filename on every platform, and still recognisable six months on. */
+function fileSlug(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug === '' ? 'check-form' : slug;
+}
+
+async function exportAll(): Promise<void> {
+  if (busy.value) return;
+  exporting.value = true;
+  error.value = '';
+  imported.value = [];
+  try {
+    const document_ = await api.exportCheckForms();
+    download(document_, `vigilo-check-forms-${document_.exportedAt.slice(0, 10)}.json`);
+  } catch (err) {
+    error.value =
+      err instanceof ApiRequestError ? err.message : 'Could not export the check forms.';
+  } finally {
+    exporting.value = false;
+  }
+}
+
+async function exportOne(template: CheckTemplate): Promise<void> {
+  if (busy.value) return;
+  exporting.value = true;
+  error.value = '';
+  imported.value = [];
+  try {
+    const document_ = await api.exportCheckForms([template.id]);
+    download(document_, `vigilo-${fileSlug(template.name)}.json`);
+  } catch (err) {
+    error.value = err instanceof ApiRequestError ? err.message : 'Could not export that form.';
+  } finally {
+    exporting.value = false;
+  }
+}
+
+function chooseFile(): void {
+  fileInput.value?.click();
+}
+
+/**
+ * Reads the file here and posts the parsed document, so a file that is not a
+ * Vigilo export is refused on the spot with something readable rather than
+ * coming back as a validation error about a field nobody typed.
+ */
+async function importChosen(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+
+  importing.value = true;
+  error.value = '';
+  imported.value = [];
+  try {
+    const parsed = checkFormExportSchema.safeParse(JSON.parse(await file.text()));
+    if (!parsed.success) {
+      error.value = 'That file is not a Vigilo check form export.';
+      return;
+    }
+
+    imported.value = await api.importCheckForms(parsed.data);
+    await load();
+  } catch (err) {
+    error.value =
+      err instanceof ApiRequestError ? err.message : 'That file could not be read as JSON.';
+  } finally {
+    importing.value = false;
+  }
+}
+
 async function create(): Promise<void> {
   if (
     !guard.ready(
@@ -78,36 +180,98 @@ async function create(): Promise<void> {
 
     <FormError :message="guard.problem.value?.message ?? error" />
 
-    <form v-if="canManage" class="card flex flex-wrap items-end gap-3 p-4" @submit.prevent="create">
-      <div class="min-w-56 flex-1">
-        <label class="field-label" for="template-name">Name</label>
-        <input
-          id="template-name"
-          v-model="name"
-          class="field"
-          type="text"
-          placeholder="Vent observations"
-          :aria-invalid="guard.invalid('template-name')"
-          @input="guard.clear()"
-        />
-        <p class="text-text-secondary mt-1 text-sm">
-          What the team calls this set of checks. You add the fields on the next screen.
-        </p>
+    <!--
+      The hint lives under the row rather than under the Name box. Inside the
+      flex item it made that column taller than the Description one, and the two
+      inputs stopped lining up for the sake of a sentence that describes the
+      whole form anyway.
+    -->
+    <form v-if="canManage" class="card space-y-2 p-4" @submit.prevent="create">
+      <div class="flex flex-wrap items-end gap-3">
+        <div class="min-w-56 flex-1">
+          <label class="field-label" for="template-name">Name</label>
+          <input
+            id="template-name"
+            v-model="name"
+            class="field"
+            type="text"
+            placeholder="Vent observations"
+            :aria-invalid="guard.invalid('template-name')"
+            @input="guard.clear()"
+          />
+        </div>
+        <div class="min-w-56 flex-1">
+          <label class="field-label" for="template-description">Description</label>
+          <input
+            id="template-description"
+            v-model="description"
+            class="field"
+            type="text"
+            placeholder="2-hourly ventilator checks"
+          />
+        </div>
+        <button class="btn btn-primary" type="submit" :disabled="creating">
+          {{ creating ? 'Creating…' : 'New check form' }}
+        </button>
       </div>
-      <div class="min-w-56 flex-1">
-        <label class="field-label" for="template-description">Description</label>
-        <input
-          id="template-description"
-          v-model="description"
-          class="field"
-          type="text"
-          placeholder="2-hourly ventilator checks"
-        />
-      </div>
-      <button class="btn btn-primary" type="submit" :disabled="creating">
-        {{ creating ? 'Creating…' : 'New check form' }}
-      </button>
+      <p class="text-text-secondary text-sm">
+        What the team calls this set of checks. You add the fields on the next screen.
+      </p>
     </form>
+
+    <!--
+      Export and import (D91). Building a twenty-field form is an afternoon, and
+      doing it again on another box is the same afternoon. A file moves it.
+    -->
+    <section v-if="canManage" class="card space-y-2 p-4">
+      <div class="flex flex-wrap items-center gap-2">
+        <h2 class="text-lg font-semibold">Move forms between installations</h2>
+        <div class="ml-auto flex flex-wrap gap-2">
+          <button
+            type="button"
+            class="btn border-border-default border"
+            :disabled="busy"
+            @click="exportAll"
+          >
+            {{ exporting ? 'Exporting…' : 'Export all forms' }}
+          </button>
+          <button
+            type="button"
+            class="btn border-border-default border"
+            :disabled="busy"
+            @click="chooseFile"
+          >
+            {{ importing ? 'Importing…' : 'Import from a file' }}
+          </button>
+        </div>
+      </div>
+
+      <p class="text-text-secondary text-sm">
+        An export is the names and the fields, and nothing else: no records, no participants, no
+        publication history. Everything imported arrives as an unpublished draft for you to check
+        and publish here, so nothing lands in front of a worker straight off a file.
+      </p>
+
+      <input
+        ref="fileInput"
+        type="file"
+        accept="application/json,.json"
+        class="hidden"
+        @change="importChosen"
+      />
+
+      <ul v-if="imported.length > 0" class="space-y-1 text-sm">
+        <li v-for="form in imported" :key="form.id">
+          Imported <span class="font-medium">{{ form.name }}</span>
+          <span v-if="form.name !== form.originalName" class="text-text-secondary">
+            (a form called "{{ form.originalName }}" was already here, so this one was renamed)
+          </span>
+          <span class="text-text-secondary">
+            · {{ form.fieldCount }} {{ form.fieldCount === 1 ? 'field' : 'fields' }}, draft
+          </span>
+        </li>
+      </ul>
+    </section>
 
     <p v-if="loading" class="text-text-secondary">Loading.</p>
 
@@ -164,6 +328,15 @@ async function create(): Promise<void> {
             >
               Edit fields
             </RouterLink>
+            <button
+              v-if="canManage"
+              type="button"
+              class="btn border-border-default border"
+              :disabled="busy"
+              @click="exportOne(template)"
+            >
+              Export
+            </button>
           </div>
         </div>
 

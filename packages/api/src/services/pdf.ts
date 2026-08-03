@@ -2,6 +2,7 @@ import PDFDocument from 'pdfkit';
 import type { Readable } from 'node:stream';
 import {
   dayIsEmpty,
+  describeAmountGiven,
   describeIncidentStatus,
   describeMyCheck,
   describeSeverity,
@@ -332,7 +333,10 @@ function doseBlock(doc: PDFKit.PDFDocument, dose: DailyDose, time: (iso: string)
   const label = dose.isPrn ? `${when}  As needed` : when;
 
   doc.font(BODY_BOLD).fontSize(10).fillColor(INK);
-  doc.text(`${label}   ${dose.medicationName} ${dose.dose}   ${dose.statusLabel}`);
+  // The charted amount, and what was actually given when that differs. Both,
+  // never one instead of the other: the reader has to be able to see the gap.
+  const amount = describeAmountGiven(dose.dose, dose.amountGiven);
+  doc.text(`${label}   ${dose.medicationName} ${amount}   ${dose.statusLabel}`);
 
   doc.font(BODY).fontSize(10).fillColor(INK);
   if (dose.reason !== null) doc.text(`Given because: ${dose.reason}`, { indent: 12 });

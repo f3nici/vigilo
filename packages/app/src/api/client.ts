@@ -5,6 +5,7 @@ import {
   assignmentSchema,
   supportTeamChangeSchema,
   attachmentSchema,
+  checkFormExportSchema,
   checkScheduleSchema,
   checkTemplateSchema,
   checkWindowSchema,
@@ -18,6 +19,7 @@ import {
   emergencyPlanSchema,
   entryRevisionSchema,
   healthResponseSchema,
+  importCheckFormsResponseSchema,
   missReasonSchema,
   missedReasonCodeSchema,
   publishPreviewSchema,
@@ -42,6 +44,7 @@ import {
   totpEnrolResponseSchema,
   userSummarySchema,
   type Attachment,
+  type CheckFormExport,
   type CheckSchedule,
   type CheckTemplate,
   type CheckWindow,
@@ -69,6 +72,8 @@ import {
   type EntryRevision,
   type ErrorCode,
   type HealthResponse,
+  type ImportCheckFormsRequest,
+  type ImportedForm,
   type CarePlan,
   type CarePlanVersion,
   type CloseIncidentRequest,
@@ -564,6 +569,25 @@ export async function publishVersion(versionId: string): Promise<TemplateVersion
   return versionWrapperSchema.parse(
     await request(`/v1/check-template-versions/${versionId}/publish`, { method: 'POST' }),
   ).version;
+}
+
+/**
+ * Check forms as a file (D91).
+ *
+ * Ordinary JSON through `request`, not a download link, because the errors
+ * matter: an admin who is not allowed to export needs to be told that, and a
+ * link the browser follows would hand them a page of JSON instead. The file is
+ * built from the parsed document on the way out.
+ */
+export async function exportCheckForms(ids: readonly string[] = []): Promise<CheckFormExport> {
+  const query = ids.length === 0 ? '' : `?ids=${ids.join(',')}`;
+  return checkFormExportSchema.parse(await request(`/v1/check-templates/export${query}`));
+}
+
+export async function importCheckForms(document: ImportCheckFormsRequest): Promise<ImportedForm[]> {
+  return importCheckFormsResponseSchema.parse(
+    await request('/v1/check-templates/import', { method: 'POST', body: document }),
+  ).imported;
 }
 
 // Schedules and coverage (doc 04 §6).

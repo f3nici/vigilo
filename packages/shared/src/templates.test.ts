@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildCheckFormExport,
+  checkFormExportSchema,
   diffTemplateSchemas,
   fieldRecordsValue,
   formatFieldValue,
@@ -8,6 +10,7 @@ import {
   requiredFieldKeys,
   suggestFieldKey,
   templateSchemaSchema,
+  uniqueFormName,
   validateAgainstPublished,
   validateTemplateSchema,
   type FieldType,
@@ -476,5 +479,88 @@ describe('key suggestions', () => {
 
   it('keeps a key starting with a letter', () => {
     expect(suggestFieldKey('2 hourly reading')).toBe('field_2_hourly_reading');
+  });
+});
+
+describe('exporting and importing check forms', () => {
+  const document = buildCheckFormExport(
+    [{ name: 'Vent observations', description: '2-hourly', schema: VENT }],
+    new Date('2026-08-03T02:00:00Z'),
+  );
+
+  it('round-trips a form through the document and back', () => {
+    const parsed = checkFormExportSchema.parse(JSON.parse(JSON.stringify(document)));
+    expect(parsed.forms[0]!.name).toBe('Vent observations');
+    expect(parsed.forms[0]!.schema).toEqual(VENT);
+  });
+
+  /**
+   * Identity is what must not travel. An imported form is a new form where it
+   * lands, so nothing in the file can point at a template, a version or a
+   * publication that only means something in the installation it came from.
+   */
+  it('carries no ids, versions or publication history', () => {
+    const keys = Object.keys(document.forms[0]!).sort();
+    expect(keys).toEqual(['description', 'name', 'schema']);
+  });
+
+  it('refuses a file written by a later version rather than dropping fields', () => {
+    expect(checkFormExportSchema.safeParse({ ...document, version: 2 }).success).toBe(false);
+  });
+
+  it('refuses a file that is not a check form export at all', () => {
+    expect(checkFormExportSchema.safeParse({ kind: 'something-else' }).success).toBe(false);
+    expect(checkFormExportSchema.safeParse({ ...document, forms: [] }).success).toBe(false);
+  });
+
+  it('refuses a field the schema does not define, rather than storing it', () => {
+    const smuggled = {
+      ...document,
+      forms: [
+        {
+          name: 'Vent observations',
+          description: null,
+          schema: {
+            fields: [
+              {
+                key: 'spo2',
+                label: 'SpO2',
+                type: 'number',
+                unit: '%',
+                decimals: 0,
+                sort: 10,
+                required: true,
+                normalRange: [95, 100],
+              },
+            ],
+          },
+        },
+      ],
+    };
+    // D14 again, through the import door this time.
+    expect(checkFormExportSchema.safeParse(smuggled).success).toBe(false);
+  });
+});
+
+describe('naming an imported form', () => {
+  it('keeps the name when nothing else has it', () => {
+    expect(uniqueFormName('Vent observations', new Set())).toBe('Vent observations');
+  });
+
+  it('marks a collision instead of overwriting the form already there', () => {
+    const taken = new Set(['Vent observations']);
+    expect(uniqueFormName('Vent observations', taken)).toBe('Vent observations (imported)');
+  });
+
+  it('counts up when the same file is imported again', () => {
+    const taken = new Set(['Vent observations', 'Vent observations (imported)']);
+    expect(uniqueFormName('Vent observations', taken)).toBe('Vent observations (imported 2)');
+  });
+
+  it('keeps a long name inside the length the name field allows', () => {
+    const long = 'V'.repeat(100);
+    const name = uniqueFormName(long, new Set([long]));
+    expect(name.length).toBeLessThanOrEqual(100);
+    expect(name.endsWith(' (imported)')).toBe(true);
   });
 });

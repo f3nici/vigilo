@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import {
   administrationProblem,
   administrationStatuses,
   describeAdministrationStatus,
   describeMedication,
+  medicationWasTaken,
   noteIsRequired,
   witnessIsRequired,
   type AdministrationStatus,
@@ -42,6 +43,7 @@ const emit = defineEmits<{ saved: []; cancel: [] }>();
 const session = useSessionStore();
 
 const status = ref<AdministrationStatus>('given');
+const amountGiven = ref('');
 const note = ref('');
 const reason = ref('');
 const outcome = ref('');
@@ -69,6 +71,20 @@ const instructions = computed(
 const noteRequired = computed(() => noteIsRequired(status.value));
 const witnessRequired = computed(() => witnessIsRequired(status.value, requiresWitness.value));
 
+/** What is charted, shown as the placeholder so nobody has to remember it. */
+const chartedDose = computed(() => props.dose?.dose ?? props.medication?.dose ?? '');
+
+/**
+ * An amount is only asked for when something actually went in. Switching to a
+ * refusal clears whatever was typed, because a record that says "refused, 5 mg"
+ * reads two ways and nobody later can tell which was meant.
+ */
+const amountApplies = computed(() => medicationWasTaken(status.value));
+
+watch(status, () => {
+  if (!amountApplies.value) amountGiven.value = '';
+});
+
 /**
  * The message the worker will see if they save now, computed as they type
  * rather than on submit. Being told what is missing before pressing the button
@@ -78,6 +94,7 @@ const problem = computed(() =>
   administrationProblem({
     status: status.value,
     note: note.value.trim() === '' ? null : note.value,
+    amountGiven: amountGiven.value.trim() === '' ? null : amountGiven.value,
     witnessedBy: witnessedBy.value === '' ? null : witnessedBy.value,
     requiresWitness: requiresWitness.value,
     recordedBy: session.principal?.userId ?? '',
@@ -126,6 +143,7 @@ async function save(): Promise<void> {
           status: status.value,
           administeredAt: now,
           recordedAt: now,
+          amountGiven: amountGiven.value.trim() === '' ? null : amountGiven.value.trim(),
           note: note.value.trim() === '' ? null : note.value.trim(),
           witnessedBy: witnessedBy.value === '' ? null : witnessedBy.value,
         },
@@ -140,6 +158,7 @@ async function save(): Promise<void> {
           status: status.value,
           administeredAt: now,
           recordedAt: now,
+          amountGiven: amountGiven.value.trim() === '' ? null : amountGiven.value.trim(),
           reason: reason.value.trim(),
           outcome: outcome.value.trim() === '' ? null : outcome.value.trim(),
           note: note.value.trim() === '' ? null : note.value.trim(),
@@ -194,6 +213,29 @@ async function save(): Promise<void> {
         :aria-invalid="guard.invalid('dose-reason')"
         @input="guard.clear()"
       />
+    </label>
+
+    <!--
+      How much went in. Free text on purpose: "half a tablet", "7.5 mL", "2
+      puffs". Nothing converts it, totals it or compares it to the chart.
+    -->
+    <label v-if="amountApplies" class="block space-y-1">
+      <span class="field-label">
+        Amount given
+        <span class="text-text-secondary font-normal">(if it was not the charted amount)</span>
+      </span>
+      <input
+        id="dose-amount"
+        v-model="amountGiven"
+        class="field"
+        type="text"
+        maxlength="100"
+        :placeholder="chartedDose"
+        autocomplete="off"
+      />
+      <span class="text-text-secondary block text-sm">
+        Charted as {{ chartedDose }}. Leave it blank if that is what you gave.
+      </span>
     </label>
 
     <label class="block space-y-1">

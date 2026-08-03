@@ -149,7 +149,10 @@ service container.
   CORS-allow it and set `SESSION_SAMESITE=none`, or native sign-in fails
   silently. This cost time on CareLane, do not repeat it.
 - Publishing a check template version is irreversible. Existing entries stay
-  bound to the version they were recorded against.
+  bound to the version they were recorded against. **An imported check form
+  always lands as a new, unpublished draft** (D91): the export carries the name,
+  the description and the field set and no identity at all, so an import can
+  never update, supersede or publish over a version that entries point at.
 - **The attachment volume must be writable by the `node` user.** The image
   creates `/data/attachments` owned by it so a fresh named volume inherits
   that, and the API refuses to start if it cannot write there. A root-owned
@@ -196,7 +199,10 @@ service container.
 - **Medication has no clinical checking and never will.** No interactions, no
   maximum daily totals, no dose validation. A dose is text transcribed off a
   label, and software that does arithmetic on doses is software that can get a
-  dose wrong.
+  dose wrong. That covers `amount_given` on a sign-off, which is what actually
+  went in and is free text for the same reason (D92). It is optional, a blank
+  never means "the charted amount", and it cannot sit on a status that says
+  nothing was given.
 - **HEIC is refused** (D41). The app converts to JPEG in the browser first, so
   an iPhone never hits it, but anything bypassing the app will.
 - **One tab owns the local database** (D47). The `opfs-sahpool` VFS takes

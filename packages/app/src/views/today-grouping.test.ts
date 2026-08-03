@@ -52,6 +52,7 @@ function window(overrides: Partial<CheckWindow>): CheckWindow {
     requiredFieldCount: 2,
     filledRequiredCount: 0,
     entryId: null,
+    recordedByName: null,
     missReason: null,
     ...overrides,
   };

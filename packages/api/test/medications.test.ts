@@ -466,6 +466,60 @@ describe('medications', () => {
       expect(response.body.administration.recordedByName).toBe('Test worker');
     });
 
+    it('records how much was actually given, in the words it was written in', async () => {
+      const { participantId, nurseSession, workerSession } = await setup();
+      const { dose } = await oneDose(nurseSession, participantId);
+
+      const response = await api(
+        workerSession,
+        'put',
+        `/api/v1/medication-doses/${dose.id}/administration`,
+      )
+        .send(signOff({ amountGiven: 'half a tablet' }))
+        .expect(200);
+
+      // Stored as typed. Nothing parses it, converts it or compares it to the
+      // charted dose (CLAUDE.md: no arithmetic on doses, ever).
+      expect(response.body.administration.amountGiven).toBe('half a tablet');
+
+      const listed = await api(
+        workerSession,
+        'get',
+        `/api/v1/participants/${participantId}/medication-administrations`,
+      ).expect(200);
+      expect(listed.body.administrations[0].amountGiven).toBe('half a tablet');
+    });
+
+    it('leaves the amount null when nobody said, rather than assuming the chart', async () => {
+      const { participantId, nurseSession, workerSession } = await setup();
+      const { dose } = await oneDose(nurseSession, participantId);
+
+      const response = await api(
+        workerSession,
+        'put',
+        `/api/v1/medication-doses/${dose.id}/administration`,
+      )
+        .send(signOff())
+        .expect(200);
+
+      expect(response.body.administration.amountGiven).toBeNull();
+    });
+
+    it('refuses an amount on a sign-off that says nothing was given', async () => {
+      const { participantId, nurseSession, workerSession } = await setup();
+      const { dose } = await oneDose(nurseSession, participantId);
+
+      const response = await api(
+        workerSession,
+        'put',
+        `/api/v1/medication-doses/${dose.id}/administration`,
+      )
+        .send(signOff({ status: 'refused', note: 'Spat it out', amountGiven: '5 mg' }))
+        .expect(422);
+
+      expect(response.body.error.message).toContain('no amount to record');
+    });
+
     it('replays the same sign-off without writing a second one', async () => {
       // The whole idempotency guarantee: a device that lost the response and
       // retried must not produce two records of one dose.

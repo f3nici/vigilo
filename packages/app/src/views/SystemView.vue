@@ -41,11 +41,42 @@ onMounted(async () => {
 function yesNo(value: boolean): string {
   return value ? 'Yes' : 'No';
 }
+
+/** Replaced at build time from the app's package.json. */
+const appVersion = __APP_VERSION__;
 </script>
 
 <template>
   <div class="space-y-6">
     <h1 class="text-2xl font-semibold">System</h1>
+
+    <!--
+      What is running, in the words somebody would use reporting a problem.
+      The app version is this build; the server build hash is below, and the two
+      can legitimately differ for as long as a device has not taken an update.
+    -->
+    <section class="card p-4">
+      <h2 class="text-lg font-semibold">Vigilo</h2>
+      <dl class="mt-3 grid grid-cols-1 gap-x-10 gap-y-2 sm:grid-cols-2">
+        <div class="flex justify-between gap-4">
+          <dt class="text-text-secondary">App version</dt>
+          <dd class="tabular" data-testid="app-version">{{ appVersion }}</dd>
+        </div>
+        <div class="flex justify-between gap-4">
+          <dt class="text-text-secondary">Made by</dt>
+          <dd>
+            <a
+              class="text-primary underline"
+              href="https://github.com/f3nici"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Created by Fenici
+            </a>
+          </dd>
+        </div>
+      </dl>
+    </section>
 
     <section class="card p-4">
       <h2 class="text-lg font-semibold">Server</h2>

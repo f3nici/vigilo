@@ -885,6 +885,43 @@ describe('checks', () => {
       expect(complete.body.entry.values).toHaveLength(2);
     });
 
+    it('says who filled the check in, on the window itself', async () => {
+      const { admin, windowId, versionId, participantId } = await openWindow();
+
+      await api(admin, 'put', `/api/v1/windows/${windowId}/entry`)
+        .send({
+          entryId: randomUUID(),
+          templateVersionId: versionId,
+          recordedAt: new Date().toISOString(),
+          values: [{ fieldKey: 'urine_output', number: 350 }],
+        })
+        .expect(200);
+
+      // On the window list, so a timeline row can name the person without
+      // fetching every entry behind it.
+      const windows = await api(
+        admin,
+        'get',
+        `/api/v1/participants/${participantId}/windows`,
+      ).expect(200);
+
+      const recorded = (
+        windows.body.windows as { id: string; recordedByName: string | null }[]
+      ).find((one) => one.id === windowId);
+      expect(recorded!.recordedByName).toBe('Test admin');
+
+      const detail = await api(admin, 'get', `/api/v1/windows/${windowId}`).expect(200);
+      expect(detail.body.window.recordedByName).toBe('Test admin');
+      expect(detail.body.window.entry.recordedByName).toBe('Test admin');
+    });
+
+    it('leaves the recorder empty on a window nobody has touched', async () => {
+      const { admin, windowId } = await openWindow();
+
+      const detail = await api(admin, 'get', `/api/v1/windows/${windowId}`).expect(200);
+      expect(detail.body.window.recordedByName).toBeNull();
+    });
+
     it('updates the same row when the request is replayed', async () => {
       const { admin, windowId, versionId } = await openWindow();
       const entryId = randomUUID();
