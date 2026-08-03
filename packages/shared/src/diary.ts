@@ -94,21 +94,24 @@ export const updateDiaryCategoryRequestSchema = z
 export type UpdateDiaryCategoryRequest = z.infer<typeof updateDiaryCategoryRequestSchema>;
 
 /**
- * How far back and forward `occurredAt` may sit.
+ * How far back and forward a diary entry may be dated.
  *
- * Forward is a small clock-skew allowance rather than a real window: a device
- * that is four minutes fast should not be refused, and a diary entry about
- * something that has not happened yet is not a thing. Backward is generous,
- * because catching up a week of paper notes is a real day at work, and the
- * entry carries `recordedAt` alongside so nothing is disguised.
+ * The diary is the day book, not a notes app: staff write down what a
+ * participant has coming up, and the day it is on is the point of the entry.
+ * So forward is a real window, not the clock-skew allowance it used to be.
+ * Refusing a future date made the one thing the diary is for impossible.
+ *
+ * Backward stays generous for the opposite reason: catching up a week of paper
+ * is a real day at work, and the entry carries `recordedAt` alongside, so when
+ * it was written is never disguised by when it is for.
  */
-export const OCCURRED_AT_SKEW_MINUTES = 15;
 export const OCCURRED_AT_MAX_PAST_DAYS = 90;
+export const OCCURRED_AT_MAX_FUTURE_DAYS = 730;
 
 export function occurredAtProblem(occurredAt: Date, now: Date): string | null {
-  const skewMs = OCCURRED_AT_SKEW_MINUTES * 60_000;
-  if (occurredAt.getTime() > now.getTime() + skewMs) {
-    return 'A diary entry cannot be about something that has not happened yet.';
+  const futureMs = OCCURRED_AT_MAX_FUTURE_DAYS * 24 * 60 * 60_000;
+  if (occurredAt.getTime() > now.getTime() + futureMs) {
+    return `A diary entry cannot be dated more than ${OCCURRED_AT_MAX_FUTURE_DAYS} days ahead.`;
   }
   const pastMs = OCCURRED_AT_MAX_PAST_DAYS * 24 * 60 * 60_000;
   if (occurredAt.getTime() < now.getTime() - pastMs) {

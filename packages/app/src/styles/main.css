@@ -290,4 +290,19 @@
     font-weight: 600;
     color: var(--vigilo-text-secondary);
   }
+
+  /*
+   * A label that wraps its own field is a block.
+   *
+   * Two shapes are in use: the label as a sibling of the field, and the label
+   * wrapping both the caption and the field. The second one left the label
+   * `display: inline`, and vertical margin does nothing on an inline box, so
+   * `space-y-*` between it and whatever came next collapsed to zero and the
+   * next row sat on top of the field. It only showed in plain block flow;
+   * inside a flex or grid parent the label was blockified and looked fine,
+   * which is why it survived this long in one form and not the others.
+   */
+  label:has(> .field) {
+    display: block;
+  }
 }

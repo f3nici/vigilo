@@ -89,6 +89,12 @@ function shiftDay(by: number): void {
         >
           Coverage
         </RouterLink>
+        <RouterLink
+          class="btn border-border-default min-h-11 border px-3"
+          :to="{ name: 'participant-forms', params: { id: participantId } }"
+        >
+          Forms
+        </RouterLink>
       </div>
     </div>
 

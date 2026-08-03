@@ -23,7 +23,7 @@ import { needs, needsChoice, needsText, useFormGuard } from '@/lib/forms';
 /**
  * Writing a diary entry (doc 06 §4.5).
  *
- * Category chips, the body, when it happened, photos, and the visibility
+ * Category chips, the body, the day it is on, photos, and the visibility
  * toggle. The toggle is written in plain language with the participant's name
  * in it, because "visible_to_participant" is a column name and "Alice can see
  * this entry" is a decision someone can actually make.
@@ -36,6 +36,13 @@ const props = defineProps<{
   timeZone: string;
   /** Set when editing. Absent means a new entry. */
   entry?: DiaryEntry | null;
+  /**
+   * The day the calendar is showing, as `YYYY-MM-DD`. A new entry starts there
+   * rather than on today: somebody who has paged to next Tuesday to write down
+   * an appointment means next Tuesday, and defaulting to today would file it on
+   * the wrong day every time unless they noticed and corrected it.
+   */
+  defaultDay?: string;
 }>();
 
 const emit = defineEmits<{ saved: []; cancelled: [] }>();
@@ -76,11 +83,24 @@ function fromInput(value: string): Date | null {
   }
 }
 
+/**
+ * A new entry on the day being looked at, at 09:00 rather than at the current
+ * clock time. "Next Tuesday at 14:37" is never what anybody meant; the hour is
+ * something they set, and a round one is a better thing to correct.
+ */
+function startOfEntry(): string {
+  if (props.defaultDay === undefined) return toInput(new Date().toISOString());
+  const now = utcToZoned(new Date(), props.timeZone);
+  return props.defaultDay === now.date
+    ? toInput(new Date().toISOString())
+    : `${props.defaultDay}T09:00`;
+}
+
 function reset(): void {
   const entry = props.entry;
   categoryId.value = entry?.categoryId ?? props.categories[0]?.id ?? '';
   body.value = entry?.body ?? '';
-  occurredAtLocal.value = toInput(entry?.occurredAt ?? new Date().toISOString());
+  occurredAtLocal.value = entry ? toInput(entry.occurredAt) : startOfEntry();
   visible.value = entry?.visibleToParticipant ?? true;
   attachments.value = entry ? [...entry.attachments] : [];
   reason.value = '';
@@ -89,6 +109,7 @@ function reset(): void {
 
 watch(() => props.entry, reset, { immediate: true });
 watch(() => props.categories, reset);
+watch(() => props.defaultDay, reset);
 
 const occurredAt = computed(() => fromInput(occurredAtLocal.value));
 
@@ -229,13 +250,13 @@ async function save(): Promise<void> {
     </fieldset>
 
     <div>
-      <label class="field-label" for="diary-body">What happened</label>
+      <label class="field-label" for="diary-body">What is on</label>
       <textarea
         id="diary-body"
         v-model="body"
         class="field min-h-32"
         :maxlength="DIARY_BODY_MAX"
-        placeholder="Assisted with shower, good mood throughout."
+        placeholder="GP appointment with Dr Patel, bring the referral."
         :aria-invalid="guard.invalid('diary-body')"
         @input="guard.clear()"
       />
@@ -245,7 +266,7 @@ async function save(): Promise<void> {
     </div>
 
     <div>
-      <label class="field-label" for="diary-occurred">When it happened</label>
+      <label class="field-label" for="diary-occurred">Day and time</label>
       <input
         id="diary-occurred"
         v-model="occurredAtLocal"
@@ -256,7 +277,7 @@ async function save(): Promise<void> {
       />
       <p v-if="timeProblem" class="text-state-missed mt-1 text-sm">{{ timeProblem }}</p>
       <p v-else class="text-text-secondary mt-1 text-sm">
-        Defaults to now. Change it if you are writing up something from earlier.
+        Something coming up is the normal case. A past day is fine too.
       </p>
     </div>
 
@@ -321,7 +342,7 @@ async function save(): Promise<void> {
 
     <div class="flex flex-wrap gap-2">
       <button type="submit" class="btn btn-primary" :disabled="saving || uploading">
-        {{ saving ? 'Saving…' : isEdit ? 'Save changes' : 'Record entry' }}
+        {{ saving ? 'Saving…' : isEdit ? 'Save changes' : 'Add to the diary' }}
       </button>
       <button type="button" class="btn border-border-default border" @click="emit('cancelled')">
         Cancel

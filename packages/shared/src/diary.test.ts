@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  OCCURRED_AT_MAX_FUTURE_DAYS,
   OCCURRED_AT_MAX_PAST_DAYS,
   canReadDiaryEntry,
   createDiaryEntryRequestSchema,
@@ -21,10 +22,17 @@ describe('occurredAtProblem', () => {
     expect(occurredAtProblem(minutesFromNow(-300), NOW)).toBeNull();
   });
 
-  /** A device four minutes fast is not making a claim about the future. */
-  it('allows a little clock skew', () => {
-    expect(occurredAtProblem(minutesFromNow(4), NOW)).toBeNull();
-    expect(occurredAtProblem(minutesFromNow(60), NOW)).toContain('has not happened yet');
+  /** The day book is mostly about what is coming up, so ahead is the normal case. */
+  it('accepts something coming up', () => {
+    const days = (count: number) => minutesFromNow(count * 24 * 60);
+    expect(occurredAtProblem(minutesFromNow(60), NOW)).toBeNull();
+    expect(occurredAtProblem(days(30), NOW)).toBeNull();
+    expect(occurredAtProblem(days(OCCURRED_AT_MAX_FUTURE_DAYS - 1), NOW)).toBeNull();
+  });
+
+  it('refuses a date far enough ahead to be a typo', () => {
+    const days = (count: number) => minutesFromNow(count * 24 * 60);
+    expect(occurredAtProblem(days(OCCURRED_AT_MAX_FUTURE_DAYS + 1), NOW)).toContain('730 days');
   });
 
   it('refuses a date far enough back to be a typo or a fabrication', () => {

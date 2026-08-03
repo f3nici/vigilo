@@ -62,6 +62,7 @@ import {
   type CreateParticipantRequest,
   type CreateScheduleRequest,
   type CreateTemplateRequest,
+  type ParticipantFormChoice,
   type DiaryCategory,
   type DiaryEntry,
   type DiaryQuery,
@@ -734,6 +735,38 @@ export async function listRecordableForms(
       ),
     })
     .parse(await request(`/v1/participants/${participantId}/recordable-forms`)).forms;
+}
+
+/** The admin tick list: which forms apply to this participant (D94). */
+const formChoicesSchema = z.object({
+  forms: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      description: z.string().nullable(),
+      assigned: z.boolean(),
+      recordable: z.boolean(),
+    }),
+  ),
+});
+
+export async function listParticipantFormChoices(
+  participantId: string,
+): Promise<ParticipantFormChoice[]> {
+  return formChoicesSchema.parse(await request(`/v1/participants/${participantId}/form-choices`))
+    .forms;
+}
+
+export async function setParticipantForms(
+  participantId: string,
+  templateIds: string[],
+): Promise<ParticipantFormChoice[]> {
+  return formChoicesSchema.parse(
+    await request(`/v1/participants/${participantId}/forms`, {
+      method: 'PUT',
+      body: { templateIds },
+    }),
+  ).forms;
 }
 
 export async function recordUnscheduledCheck(

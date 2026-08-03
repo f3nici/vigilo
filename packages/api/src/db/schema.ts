@@ -521,6 +521,42 @@ export const checkTemplateVersions = pgTable(
 
 export type CheckTemplateVersionRow = typeof checkTemplateVersions.$inferSelect;
 
+/**
+ * Which forms belong to which participant (D94).
+ *
+ * A check form is written once and used for whoever it suits: a bowel chart, a
+ * seizure record, a blood pressure. Offering every one of them to a worker
+ * recording a check for somebody they none of them apply to is how the wrong
+ * form gets filled in, and it gets worse with every form the org adds.
+ *
+ * An admin ticks the ones that apply. This is about what a worker is offered
+ * when they record on demand; it is not a permission, and it is not a
+ * schedule. A form scheduled for a participant is theirs whether or not it is
+ * ticked here, because the schedule already said so.
+ */
+export const participantCheckForms = pgTable(
+  'participant_check_forms',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    participantId: uuid('participant_id')
+      .notNull()
+      .references(() => participants.id, { onDelete: 'cascade' }),
+    templateId: uuid('template_id')
+      .notNull()
+      .references(() => checkTemplates.id, { onDelete: 'cascade' }),
+    assignedBy: uuid('assigned_by').references(() => users.id),
+    assignedAt: timestamp('assigned_at', { withTimezone: true }).notNull().defaultNow(),
+    revision: bigint('revision', { mode: 'number' }).notNull().default(0),
+  },
+  (table) => [
+    unique('participant_check_forms_key').on(table.participantId, table.templateId),
+    index('participant_check_forms_participant_idx').on(table.participantId),
+    index('participant_check_forms_revision_idx').on(table.revision),
+  ],
+);
+
+export type ParticipantCheckFormRow = typeof participantCheckForms.$inferSelect;
+
 /** One participant, one template, and the grid rules underneath (doc 03 §5). */
 export const checkSchedules = pgTable(
   'check_schedules',

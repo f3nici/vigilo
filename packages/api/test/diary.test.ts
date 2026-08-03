@@ -143,17 +143,41 @@ describe('diary', () => {
       expect(Date.parse(created.body.entry.recordedAt)).toBeGreaterThan(Date.parse(occurredAt));
     });
 
-    it('refuses an entry about something that has not happened yet', async () => {
+    /**
+     * The diary is the day book. Writing down what somebody has coming up is
+     * the ordinary use of it, so a future date is accepted rather than refused.
+     */
+    it('accepts an entry for something coming up', async () => {
+      const { worker, participantId, categoryId } = await setUp();
+      const occurredAt = new Date(Date.now() + 14 * 24 * 3_600_000).toISOString();
+
+      const response = await api(
+        worker,
+        'post',
+        `/api/v1/participants/${participantId}/diary`,
+      ).send(newEntry(categoryId, { occurredAt }));
+
+      expect(response.status).toBe(201);
+      expect(response.body.entry.occurredAt).toBe(occurredAt);
+      // When it was written is still its own field, and still now.
+      expect(Date.parse(response.body.entry.recordedAt)).toBeLessThan(Date.parse(occurredAt));
+    });
+
+    it('refuses a date far enough ahead to be a typo', async () => {
       const { worker, participantId, categoryId } = await setUp();
 
       const response = await api(
         worker,
         'post',
         `/api/v1/participants/${participantId}/diary`,
-      ).send(newEntry(categoryId, { occurredAt: new Date(Date.now() + 3_600_000).toISOString() }));
+      ).send(
+        newEntry(categoryId, {
+          occurredAt: new Date(Date.now() + 800 * 24 * 3_600_000).toISOString(),
+        }),
+      );
 
       expect(response.status).toBe(422);
-      expect(response.body.error.message).toContain('has not happened yet');
+      expect(response.body.error.message).toContain('730 days');
     });
 
     /** A replayed outbox must not write the shift up twice. */
