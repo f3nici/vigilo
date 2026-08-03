@@ -413,8 +413,22 @@ describe('checks', () => {
       ];
     }
 
+    /** D94. A form is only offered for somebody it was ticked for. */
+    async function tick(
+      admin: Awaited<ReturnType<typeof signIn>>,
+      participantId: string,
+      templateIds: string[],
+    ) {
+      const response = await api(admin, 'put', `/api/v1/participants/${participantId}/forms`).send({
+        templateIds,
+      });
+      expect(response.status).toBe(200);
+      return response;
+    }
+
     it('lists the published forms a worker can fill in', async () => {
-      const { admin, participantId } = await setUp();
+      const { admin, participantId, templateId } = await setUp();
+      await tick(admin, participantId, [templateId]);
 
       const response = await api(
         admin,
@@ -430,8 +444,11 @@ describe('checks', () => {
     });
 
     it('leaves out a form that was never published', async () => {
-      const { admin, participantId } = await setUp();
-      await api(admin, 'post', '/api/v1/check-templates').send({ name: 'Weight check' });
+      const { admin, participantId, templateId } = await setUp();
+      const draft = await api(admin, 'post', '/api/v1/check-templates').send({
+        name: 'Weight check',
+      });
+      await tick(admin, participantId, [templateId, draft.body.template.id as string]);
 
       const response = await api(
         admin,
@@ -441,6 +458,93 @@ describe('checks', () => {
       expect(response.body.forms.map((form: { name: string }) => form.name)).toEqual([
         'Vent observations',
       ]);
+    });
+
+    /**
+     * The whole point of D94: a published form belonging to somebody else is
+     * not on this person's picker. This is the assertion that would have
+     * caught the old behaviour, where every form in the org was offered for
+     * every participant.
+     */
+    it('leaves out a published form that was never ticked for this person', async () => {
+      const { admin, participantId } = await setUp();
+
+      const response = await api(
+        admin,
+        'get',
+        `/api/v1/participants/${participantId}/recordable-forms`,
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body.forms).toEqual([]);
+    });
+
+    /**
+     * A form on this participant's schedule is theirs by a stronger route than
+     * a tick. Leaving it out would mean a worker could fill in a window for a
+     * form they cannot record on demand.
+     */
+    it('includes a form that is on the schedule without being ticked', async () => {
+      const { admin, participantId, templateId } = await setUp();
+      const schedule = await api(
+        admin,
+        'post',
+        `/api/v1/participants/${participantId}/schedules`,
+      ).send({
+        templateId,
+        name: 'Vent obs',
+        activeFrom: '2026-01-01',
+        segments: DAY_AND_NIGHT,
+      });
+      expect(schedule.status).toBe(201);
+
+      const response = await api(
+        admin,
+        'get',
+        `/api/v1/participants/${participantId}/recordable-forms`,
+      );
+      expect(response.body.forms.map((form: { name: string }) => form.name)).toEqual([
+        'Vent observations',
+      ]);
+    });
+
+    it('gives an admin the tick list, and saves it', async () => {
+      const { admin, participantId, templateId } = await setUp();
+
+      const before = await api(admin, 'get', `/api/v1/participants/${participantId}/form-choices`);
+      expect(before.status).toBe(200);
+      expect(before.body.forms).toEqual([
+        expect.objectContaining({ id: templateId, assigned: false, recordable: true }),
+      ]);
+
+      const saved = await tick(admin, participantId, [templateId]);
+      expect(saved.body.forms).toEqual([
+        expect.objectContaining({ id: templateId, assigned: true }),
+      ]);
+
+      // Saving the empty set takes them all off again, rather than being a no-op.
+      const cleared = await tick(admin, participantId, []);
+      expect(cleared.body.forms).toEqual([
+        expect.objectContaining({ id: templateId, assigned: false }),
+      ]);
+    });
+
+    it('refuses the tick list to a worker', async () => {
+      const { admin, participantId, templateId } = await setUp();
+      const workerUser = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
+      const worker = await signIn(h, workerUser);
+      await api(admin, 'post', `/api/v1/participants/${participantId}/assignments`).send({
+        userId: workerUser.id,
+        kind: 'standing',
+      });
+
+      const listed = await api(worker, 'get', `/api/v1/participants/${participantId}/form-choices`);
+      expect(listed.status).toBe(403);
+
+      const saved = await api(worker, 'put', `/api/v1/participants/${participantId}/forms`).send({
+        templateIds: [templateId],
+      });
+      expect(saved.status).toBe(403);
     });
 
     it('records one with no window at all', async () => {

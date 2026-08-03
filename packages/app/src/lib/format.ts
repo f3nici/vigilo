@@ -80,16 +80,38 @@ export function ageInYears(dateOfBirth: string, now = new Date()): number | null
 }
 
 /**
- * A window's clock times in the org timezone, which is the only timezone staff
- * ever see (doc 06 §7). A phone in another zone still reads the roster's hours.
+ * The clock time in the org timezone, which is the only timezone staff ever
+ * see (doc 06 §7). A phone in another zone still reads the roster's hours.
  */
-export function formatWindowTime(iso: string, timeZone: string): string {
+export function formatTimeIn(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat('en-AU', {
     timeZone,
     hour: '2-digit',
     minute: '2-digit',
     hourCycle: 'h23',
   }).format(new Date(iso));
+}
+
+export function formatWindowTime(iso: string, timeZone: string): string {
+  return formatTimeIn(iso, timeZone);
+}
+
+/**
+ * A `YYYY-MM-DD` from the calendar, not an instant.
+ *
+ * Deliberately no `timeZone`: the date has already been resolved in the org
+ * zone, and handing a plain date to a formatter with a zone on it means
+ * parsing it as UTC midnight and then shifting, which lands on the day before
+ * anywhere west of Greenwich. The calendar cell and its heading have to agree.
+ */
+export function formatDateHeading(isoDate: string): string {
+  const [year, month, day] = isoDate.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-AU', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(year!, month! - 1, day!));
 }
 
 export function formatWindowRange(startsAt: string, endsAt: string, timeZone: string): string {

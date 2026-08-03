@@ -5,6 +5,7 @@ import {
   canManageSchedules,
   canRecordChecks,
   recordUnscheduledCheckRequestSchema,
+  setParticipantFormsRequestSchema,
   createCoverageExceptionRequestSchema,
   createMissedReasonCodeRequestSchema,
   createScheduleRequestSchema,
@@ -61,7 +62,11 @@ import {
 } from '../services/entries.js';
 import { createReasonCode, listReasonCodes, updateReasonCode } from '../services/reasonCodes.js';
 import { findParticipant } from '../services/participants.js';
-import { listRecordableForms } from '../services/templates.js';
+import {
+  listParticipantFormChoices,
+  listRecordableForms,
+  setParticipantForms,
+} from '../services/templates.js';
 import { assertInScope } from '../services/scope.js';
 import { getOrgSettings } from '../services/org.js';
 import { currentPrincipal, requireAuth, requireCapability } from '../middleware/principal.js';
@@ -262,7 +267,37 @@ export function participantCheckRoutes(db: Database, keyRing: KeyRing): Router {
     asyncHandler(async (req, res) => {
       const id = scoped(req);
       await findParticipant(db, id);
-      res.json({ forms: await listRecordableForms(db) });
+      res.json({ forms: await listRecordableForms(db, id) });
+    }),
+  );
+
+  /**
+   * The tick list, and saving it (D94).
+   *
+   * Which forms belong to this person, which is participant setup rather than
+   * form authoring, so it sits with scheduling rather than with templates.
+   */
+  router.get(
+    '/:id/form-choices',
+    requireCapability(canManageSchedules, 'Only an admin or a team leader sets that up.'),
+    asyncHandler(async (req, res) => {
+      const id = scoped(req);
+      await findParticipant(db, id);
+      res.json({ forms: await listParticipantFormChoices(db, id) });
+    }),
+  );
+
+  router.put(
+    '/:id/forms',
+    requireCapability(canManageSchedules, 'Only an admin or a team leader sets that up.'),
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      const id = scoped(req);
+      await findParticipant(db, id);
+      const { templateIds } = setParticipantFormsRequestSchema.parse(req.body);
+
+      await setParticipantForms(db, id, templateIds, req.auditActor, principal.user.id);
+      res.json({ forms: await listParticipantFormChoices(db, id) });
     }),
   );
 

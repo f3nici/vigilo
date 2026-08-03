@@ -106,6 +106,14 @@ const routes: RouteRecordRaw[] = [
         meta: { requiresAuth: true, roles: ['admin', 'team_leader'], title: 'Check schedule' },
       },
       {
+        path: 'participants/:id/forms',
+        name: 'participant-forms',
+        component: () => import('@/views/ParticipantFormsView.vue'),
+        // Which forms apply to a person is participant setup, so it sits with
+        // scheduling rather than with authoring the forms themselves.
+        meta: { requiresAuth: true, roles: ['admin', 'team_leader'], title: 'Check forms' },
+      },
+      {
         path: 'participants/:id/medications',
         name: 'participant-medications',
         component: () => import('@/views/MedicationsView.vue'),

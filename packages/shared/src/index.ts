@@ -8,6 +8,7 @@
 
 export * from './access.js';
 export * from './attachments.js';
+export * from './calendar.js';
 export * from './careplans.js';
 export * from './auth.js';
 export * from './checks.js';

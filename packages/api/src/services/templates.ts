@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, or, sql } from 'drizzle-orm';
 import {
   buildCheckFormExport,
   diffTemplateSchemas,
@@ -23,6 +23,7 @@ import {
   checkSchedules,
   checkTemplates,
   checkTemplateVersions,
+  participantCheckForms,
   users,
   type CheckTemplateRow,
   type CheckTemplateVersionRow,
@@ -214,13 +215,17 @@ export async function listVersions(db: Database, templateId: string): Promise<Te
 }
 
 /**
- * The forms a worker can record on demand right now (D89).
+ * The forms a worker can record on demand for this participant (D89, D94).
  *
- * Every active template that has a published version, as a name and an id.
- * Not the admin template list: that one carries draft state, version counts,
- * schedule counts and publication history, none of which helps somebody
- * choosing what to fill in, and all of which is about managing forms rather
- * than using one.
+ * Every active template with a published version that is either ticked for
+ * this person or already scheduled for them. Not the admin template list: that
+ * one carries draft state, version counts, schedule counts and publication
+ * history, none of which helps somebody choosing what to fill in.
+ *
+ * The schedule half of that union is not a convenience. A form an admin put on
+ * this participant's schedule is unarguably theirs, and leaving it out of the
+ * picker would mean a worker could fill in a window for a form they cannot
+ * record on demand, which is a distinction nobody can see the reason for.
  *
  * A retired template is left out. It is still bound to every entry recorded
  * against it, so history reads correctly, but it is not something to start a
@@ -228,9 +233,10 @@ export async function listVersions(db: Database, templateId: string): Promise<Te
  */
 export async function listRecordableForms(
   db: Database,
+  participantId: string,
 ): Promise<{ id: string; name: string; description: string | null }[]> {
   return db
-    .select({
+    .selectDistinct({
       id: checkTemplates.id,
       name: checkTemplates.name,
       description: checkTemplates.description,
@@ -243,8 +249,145 @@ export async function listRecordableForms(
         eq(checkTemplateVersions.status, 'published'),
       ),
     )
-    .where(eq(checkTemplates.status, 'active'))
+    .where(
+      and(
+        eq(checkTemplates.status, 'active'),
+        or(
+          inArray(
+            checkTemplates.id,
+            db
+              .select({ id: participantCheckForms.templateId })
+              .from(participantCheckForms)
+              .where(eq(participantCheckForms.participantId, participantId)),
+          ),
+          inArray(
+            checkTemplates.id,
+            db
+              .select({ id: checkSchedules.templateId })
+              .from(checkSchedules)
+              .where(
+                and(
+                  eq(checkSchedules.participantId, participantId),
+                  eq(checkSchedules.status, 'active'),
+                ),
+              ),
+          ),
+        ),
+      ),
+    )
     .orderBy(asc(checkTemplates.name));
+}
+
+/**
+ * The tick list an admin edits: every active form, and whether it is on for
+ * this participant.
+ *
+ * Unpublished forms are in the list. An admin setting a person up should be
+ * able to tick a form that is still being written, rather than having to come
+ * back after publishing it. `recordable` says which ones a worker can actually
+ * pick today, so the screen can explain the difference instead of hiding it.
+ */
+export async function listParticipantFormChoices(
+  db: Database,
+  participantId: string,
+): Promise<
+  { id: string; name: string; description: string | null; assigned: boolean; recordable: boolean }[]
+> {
+  const [templates, assigned, scheduled] = await Promise.all([
+    db
+      .select({
+        id: checkTemplates.id,
+        name: checkTemplates.name,
+        description: checkTemplates.description,
+        publishedVersions: sql<number>`count(${checkTemplateVersions.id}) filter (where ${checkTemplateVersions.status} = 'published')`,
+      })
+      .from(checkTemplates)
+      .leftJoin(checkTemplateVersions, eq(checkTemplateVersions.templateId, checkTemplates.id))
+      .where(eq(checkTemplates.status, 'active'))
+      .groupBy(checkTemplates.id)
+      .orderBy(asc(checkTemplates.name)),
+    db
+      .select({ templateId: participantCheckForms.templateId })
+      .from(participantCheckForms)
+      .where(eq(participantCheckForms.participantId, participantId)),
+    db
+      .select({ templateId: checkSchedules.templateId })
+      .from(checkSchedules)
+      .where(
+        and(eq(checkSchedules.participantId, participantId), eq(checkSchedules.status, 'active')),
+      ),
+  ]);
+
+  const ticked = new Set(assigned.map((row) => row.templateId));
+  const onSchedule = new Set(scheduled.map((row) => row.templateId));
+
+  return templates.map((template) => ({
+    id: template.id,
+    name: template.name,
+    description: template.description,
+    assigned: ticked.has(template.id) || onSchedule.has(template.id),
+    recordable: Number(template.publishedVersions) > 0,
+  }));
+}
+
+/**
+ * Replaces the tick list in one go.
+ *
+ * The whole set rather than one row at a time, because the screen is a set of
+ * checkboxes and a save: sending adds and removes separately would let a
+ * dropped request leave the two halves disagreeing.
+ *
+ * A form that is on this participant's schedule is not stored here. It is
+ * already theirs by a stronger route, and writing a row for it would leave a
+ * tick that survives the schedule being retired.
+ */
+export async function setParticipantForms(
+  db: Database,
+  participantId: string,
+  templateIds: string[],
+  actor: AuditActor,
+  assignedBy: string | null,
+): Promise<void> {
+  const active =
+    templateIds.length === 0
+      ? []
+      : await db
+          .select({ id: checkTemplates.id })
+          .from(checkTemplates)
+          .where(and(eq(checkTemplates.status, 'active'), inArray(checkTemplates.id, templateIds)));
+
+  if (active.length !== new Set(templateIds).size) {
+    throw new HttpError('validation_failed', 'One of those forms does not exist any more.');
+  }
+
+  const scheduled = await db
+    .select({ templateId: checkSchedules.templateId })
+    .from(checkSchedules)
+    .where(
+      and(eq(checkSchedules.participantId, participantId), eq(checkSchedules.status, 'active')),
+    );
+  const onSchedule = new Set(scheduled.map((row) => row.templateId));
+  const toStore = [...new Set(templateIds)].filter((id) => !onSchedule.has(id));
+
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(participantCheckForms)
+      .where(eq(participantCheckForms.participantId, participantId));
+
+    if (toStore.length > 0) {
+      await tx
+        .insert(participantCheckForms)
+        .values(toStore.map((templateId) => ({ participantId, templateId, assignedBy })));
+    }
+  });
+
+  await recordAudit(db, {
+    actor,
+    action: 'participant_forms_set',
+    entityType: 'participant',
+    entityId: participantId,
+    metadata: { templateIds: toStore, scheduled: [...onSchedule] },
+  });
 }
 
 /** The published version a schedule resolves to when it materialises a window. */

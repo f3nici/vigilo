@@ -55,6 +55,19 @@ wins.
   **outside the compliance percentage in both directions**, counted beside it.
   It has its own array on the daily report so it can never reach
   `countCompliance`.
+- **A check form is offered only for the participants it was ticked for**
+  (D94). `participant_check_forms` is the tick list, and a form on the
+  participant's active schedule counts as ticked without a row and cannot be
+  turned off. This is **not a permission**: it decides what the on-demand
+  picker offers and nothing else, so never reach for it to answer "may this
+  person see that".
+- **The diary is the day book, not a notes app** (D95). An entry may be dated
+  up to 730 days ahead, because writing down what somebody has coming up is
+  what it is for; notes on how something went live in the team's separate
+  product. `recordedAt` still says when it was written, so a future date never
+  disguises that. The tab opens on a month grid and the selected day. The old
+  rule refusing anything in the future is gone, and `OCCURRED_AT_SKEW_MINUTES`
+  with it.
 - **There are no notifications** (D88). The job, the routes, the VAPID config,
   the web-push dependency and the app's push adapter are gone, because with no
   roster there was no way to tell a worker on shift from one asleep. The

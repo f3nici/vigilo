@@ -150,9 +150,10 @@ async function save(): Promise<void> {
 
     <template v-else-if="forms.length === 0">
       <div class="card p-6">
-        <p class="font-medium">There are no published check forms yet.</p>
+        <p class="font-medium">No check forms apply to this person yet.</p>
         <p class="text-text-secondary mt-1">
-          An admin or a nurse creates one under Check forms and publishes it, then it appears here.
+          An admin or a team leader ticks which forms apply, under Forms on the checks section of
+          their record. Until then there is nothing to record on demand.
         </p>
       </div>
     </template>

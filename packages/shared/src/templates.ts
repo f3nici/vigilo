@@ -410,6 +410,29 @@ export const createTemplateRequestSchema = z
 
 export type CreateTemplateRequest = z.infer<typeof createTemplateRequestSchema>;
 
+/**
+ * The forms that apply to one participant (D94).
+ *
+ * The whole set every time, not an add and a remove. The screen is a column of
+ * checkboxes and a save button, so the set is what the admin is looking at when
+ * they press it, and sending deltas would let a dropped request leave the
+ * server holding something nobody chose.
+ */
+export const setParticipantFormsRequestSchema = z
+  .object({ templateIds: z.array(z.string().uuid()).max(200) })
+  .strict();
+
+export type SetParticipantFormsRequest = z.infer<typeof setParticipantFormsRequestSchema>;
+
+/** One row of the tick list. `recordable` is false while a form has no published version. */
+export type ParticipantFormChoice = {
+  id: string;
+  name: string;
+  description: string | null;
+  assigned: boolean;
+  recordable: boolean;
+};
+
 export const updateTemplateRequestSchema = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),

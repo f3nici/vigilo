@@ -1,34 +1,46 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import {
+  addDays,
   canDeleteDiary,
   canEditOthersDiary,
   canRecordDiary,
-  describeVisibility,
-  formatByteSize,
+  localDateOf,
+  monthGridRange,
+  startOfMonth,
+  utcToZoned,
   type DiaryCategory,
   type DiaryEntry,
   type DiaryRevision,
 } from '@vigilo/shared';
-import CategoryChip from '@/components/CategoryChip.vue';
+import DiaryCalendar from '@/components/DiaryCalendar.vue';
+import DiaryEntryCard from '@/components/DiaryEntryCard.vue';
 import DiaryEntryForm from '@/components/DiaryEntryForm.vue';
 import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 import { useSessionStore } from '@/stores/session';
-import { formatDateTimeIn } from '@/lib/format';
+import { formatDateHeading } from '@/lib/format';
 
 /**
  * The diary tab (doc 06 §4.2).
  *
- * A list of what happened, newest first, with search and a category filter.
- * Search runs on the server over decrypted bodies within this participant's
- * record, which is the only scope an encrypted body can be searched in (A9).
+ * A day book, the way the paper one worked: staff write down what a
+ * participant has coming up, and opening it shows what is on today. That is
+ * why it opens on a month grid rather than on a reverse-chronological list.
+ * Notes about how something went live in the team's notes app, not here.
+ *
+ * Search is still here as its own view, because "when was the last dental
+ * appointment" is a question about the whole record rather than about a day.
+ * It runs on the server over decrypted bodies within this participant's record,
+ * which is the only scope an encrypted body can be searched in (A9).
  */
 const props = defineProps<{ participantId: string; participantName: string }>();
 
 const session = useSessionStore();
 const role = computed(() => session.principal?.role ?? 'worker');
+
+const view = ref<'calendar' | 'search'>('calendar');
 
 const entries = ref<DiaryEntry[]>([]);
 const categories = ref<DiaryCategory[]>([]);
@@ -46,20 +58,40 @@ const revisions = ref<Record<string, DiaryRevision[]>>({});
 
 const canWrite = computed(() => canRecordDiary(role.value));
 
+/** Today in the org timezone. A worker on a phone still in another zone gets the org's day. */
+const today = computed(() => localDateOf(new Date(), timeZone.value));
+
+const selectedDay = ref(localDateOf(new Date(), session.timeZone));
+const month = ref(startOfMonth(selectedDay.value));
+
 function canEdit(entry: DiaryEntry): boolean {
   if (!canWrite.value) return false;
   return entry.recordedBy === session.principal?.userId || canEditOthersDiary(role.value);
 }
+
+/**
+ * The calendar fetches the grid it draws, not the month it is named after, so
+ * the days borrowed from either side still show their markers. Search fetches
+ * across everything and leaves the range off.
+ */
+const query = computed(() => {
+  if (view.value === 'search') {
+    return {
+      ...(search.value.trim() === '' ? {} : { search: search.value.trim() }),
+      ...(categoryFilter.value === '' ? {} : { categoryId: categoryFilter.value }),
+      limit: 50,
+    };
+  }
+  const range = monthGridRange(month.value);
+  return { from: range.from, to: range.to, limit: 200 };
+});
 
 async function load(): Promise<void> {
   loading.value = true;
   error.value = '';
   try {
     const [list, cats] = await Promise.all([
-      api.listDiary(props.participantId, {
-        ...(search.value.trim() === '' ? {} : { search: search.value.trim() }),
-        ...(categoryFilter.value === '' ? {} : { categoryId: categoryFilter.value }),
-      }),
+      api.listDiary(props.participantId, query.value),
       api.listDiaryCategories(),
     ]);
     entries.value = list.entries;
@@ -73,6 +105,37 @@ async function load(): Promise<void> {
 }
 
 onMounted(load);
+
+// Paging the calendar is a different fetch. Typing in the search box is not,
+// until the search is submitted.
+watch(month, load);
+watch(view, load);
+
+/** What is on for the chosen day, earliest first, the way a day is read. */
+const dayEntries = computed(() =>
+  entries.value
+    .filter(
+      (entry) => utcToZoned(new Date(entry.occurredAt), timeZone.value).date === selectedDay.value,
+    )
+    .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt)),
+);
+
+function stepDay(days: number): void {
+  selectedDay.value = addDays(selectedDay.value, days);
+  // Walking off the end of the grid is what turns the page.
+  const range = monthGridRange(month.value);
+  if (selectedDay.value < range.from || selectedDay.value > range.to) {
+    month.value = startOfMonth(selectedDay.value);
+  }
+}
+
+function goToToday(): void {
+  selectedDay.value = today.value;
+  month.value = startOfMonth(today.value);
+}
+
+/** A new entry defaults to the day being looked at, which is usually the point of opening it. */
+const composeDefault = computed(() => selectedDay.value);
 
 async function afterSave(): Promise<void> {
   composing.value = false;
@@ -100,23 +163,9 @@ async function showHistory(entryId: string): Promise<void> {
   }
 }
 
-/** The history says what changed in words, not as two raw column values. */
-function describeRevision(revision: DiaryRevision): string {
-  const who = revision.changedByName ?? 'Someone';
-  const when = formatDateTimeIn(revision.changedAt, timeZone.value);
-
-  switch (revision.field) {
-    case 'body':
-      return `${who} changed the text on ${when}.`;
-    case 'category':
-      return `${who} moved it to another category on ${when}.`;
-    case 'occurred_at':
-      return `${who} changed when it happened to ${formatDateTimeIn(revision.newValue ?? '', timeZone.value)} on ${when}.`;
-    case 'visibility':
-      return revision.newValue === 'true'
-        ? `${who} made it visible to ${props.participantName} on ${when}.`
-        : `${who} hid it from ${props.participantName} on ${when}.`;
-  }
+function startEditing(entry: DiaryEntry): void {
+  editing.value = entry;
+  composing.value = false;
 }
 </script>
 
@@ -137,6 +186,28 @@ function describeRevision(revision: DiaryRevision): string {
       </button>
     </div>
 
+    <!-- Two ways of asking: a day, or the whole record. -->
+    <div class="flex flex-wrap gap-2" role="group" aria-label="How to look at the diary">
+      <button
+        type="button"
+        class="btn border-border-default min-h-11 border px-3 text-sm"
+        :class="view === 'calendar' ? 'bg-primary-subtle text-primary' : ''"
+        :aria-pressed="view === 'calendar'"
+        @click="view = 'calendar'"
+      >
+        Calendar
+      </button>
+      <button
+        type="button"
+        class="btn border-border-default min-h-11 border px-3 text-sm"
+        :class="view === 'search' ? 'bg-primary-subtle text-primary' : ''"
+        :aria-pressed="view === 'search'"
+        @click="view = 'search'"
+      >
+        Search
+      </button>
+    </div>
+
     <FormError :message="error" />
 
     <DiaryEntryForm
@@ -145,51 +216,62 @@ function describeRevision(revision: DiaryRevision): string {
       :participant-name="props.participantName"
       :categories="categories"
       :time-zone="timeZone"
+      :default-day="composeDefault"
       @saved="afterSave"
       @cancelled="composing = false"
     />
 
-    <div class="flex flex-wrap gap-2">
-      <div class="min-w-48 flex-1">
-        <label class="field-label" for="diary-search">Search this person's diary</label>
-        <input
-          id="diary-search"
-          v-model="search"
-          type="search"
-          class="field"
-          placeholder="seizure, shower, equipment…"
-          @keyup.enter="load"
-        />
-      </div>
-      <div class="min-w-40">
-        <label class="field-label" for="diary-category-filter">Category</label>
-        <select id="diary-category-filter" v-model="categoryFilter" class="field" @change="load">
-          <option value="">All categories</option>
-          <option v-for="category in categories" :key="category.id" :value="category.id">
-            {{ category.label }}
-          </option>
-        </select>
-      </div>
-      <div class="flex items-end">
-        <button type="button" class="btn border-border-default border" @click="load">Search</button>
-      </div>
-    </div>
+    <!-- ------------------------------------------------------- the calendar -->
+    <template v-if="view === 'calendar'">
+      <DiaryCalendar
+        v-model:month="month"
+        v-model:selected="selectedDay"
+        :today="today"
+        :entries="entries"
+        :time-zone="timeZone"
+      />
 
-    <p v-if="loading" class="text-text-secondary">Loading.</p>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          class="btn border-border-default min-h-11 border px-3 text-sm"
+          @click="stepDay(-1)"
+        >
+          ← Day before
+        </button>
+        <h3 class="flex-1 text-center font-semibold">
+          {{ formatDateHeading(selectedDay) }}
+          <span v-if="selectedDay === today" class="text-text-secondary font-normal">(today)</span>
+        </h3>
+        <button
+          type="button"
+          class="btn border-border-default min-h-11 border px-3 text-sm"
+          @click="stepDay(1)"
+        >
+          Day after →
+        </button>
+      </div>
 
-    <p v-else-if="entries.length === 0" class="card text-text-secondary p-4">
-      Nothing recorded{{ search || categoryFilter ? ' that matches' : ' yet' }}.
-    </p>
+      <div v-if="selectedDay !== today" class="flex">
+        <button
+          type="button"
+          class="text-primary mx-auto min-h-11 text-sm underline"
+          @click="goToToday"
+        >
+          Back to today
+        </button>
+      </div>
 
-    <ul v-else class="space-y-3">
-      <li
-        v-for="entry in entries"
-        :key="entry.id"
-        class="card space-y-2 p-4"
-        :class="entry.deletedAt ? 'opacity-60' : ''"
-      >
-        <template v-if="editing?.id === entry.id">
+      <p v-if="loading" class="text-text-secondary">Loading.</p>
+
+      <p v-else-if="dayEntries.length === 0" class="card text-text-secondary p-4">
+        Nothing on this day.
+      </p>
+
+      <ul v-else class="space-y-3">
+        <li v-for="entry in dayEntries" :key="entry.id" class="card p-4">
           <DiaryEntryForm
+            v-if="editing?.id === entry.id"
             :participant-id="props.participantId"
             :participant-name="props.participantName"
             :categories="categories"
@@ -198,127 +280,91 @@ function describeRevision(revision: DiaryRevision): string {
             @saved="afterSave"
             @cancelled="editing = null"
           />
-        </template>
+          <DiaryEntryCard
+            v-else
+            :entry="entry"
+            :time-zone="timeZone"
+            :participant-name="props.participantName"
+            :can-edit="canEdit(entry)"
+            :can-delete="canDeleteDiary(role)"
+            :revisions="revisions[entry.id]"
+            :confirming-delete="confirmingDelete === entry.id"
+            time-only
+            @edit="startEditing(entry)"
+            @show-history="showHistory(entry.id)"
+            @request-delete="confirmingDelete = entry.id"
+            @confirm-delete="remove(entry.id)"
+            @cancel-delete="confirmingDelete = ''"
+          />
+        </li>
+      </ul>
+    </template>
 
-        <template v-else>
-          <div class="flex flex-wrap items-center gap-2">
-            <CategoryChip :label="entry.categoryLabel" :colour="entry.categoryColour" />
-            <span class="text-text-secondary tabular text-sm">
-              {{ formatDateTimeIn(entry.occurredAt, timeZone) }}
-            </span>
-            <span
-              v-if="!entry.visibleToParticipant"
-              class="text-text-secondary rounded-full border px-2 py-0.5 text-sm"
-              :style="{ borderColor: 'var(--vigilo-not-expected)' }"
-            >
-              {{ describeVisibility(false, props.participantName) }}
-            </span>
-            <!--
-              An admin can still read a deleted entry, because the row survives
-              for retention. It has to say so: without this the admin who just
-              pressed Delete sees the entry sitting there unchanged and has no
-              way to tell whether anything happened.
-            -->
-            <span
-              v-if="entry.deletedAt"
-              class="text-state-missed rounded-full border px-2 py-0.5 text-sm"
-              :style="{ borderColor: 'var(--vigilo-missed)' }"
-            >
-              Deleted {{ formatDateTimeIn(entry.deletedAt, timeZone) }}
-            </span>
-          </div>
+    <!-- --------------------------------------------------------- the search -->
+    <template v-else>
+      <div class="flex flex-wrap gap-2">
+        <div class="min-w-48 flex-1">
+          <label class="field-label" for="diary-search">Search this person's diary</label>
+          <input
+            id="diary-search"
+            v-model="search"
+            type="search"
+            class="field"
+            placeholder="dentist, hydro, review meeting…"
+            @keyup.enter="load"
+          />
+        </div>
+        <div class="min-w-40">
+          <label class="field-label" for="diary-category-filter">Category</label>
+          <select id="diary-category-filter" v-model="categoryFilter" class="field" @change="load">
+            <option value="">All categories</option>
+            <option v-for="category in categories" :key="category.id" :value="category.id">
+              {{ category.label }}
+            </option>
+          </select>
+        </div>
+        <div class="flex items-end">
+          <button type="button" class="btn border-border-default border" @click="load">
+            Search
+          </button>
+        </div>
+      </div>
 
-          <p class="whitespace-pre-wrap">{{ entry.body }}</p>
+      <p v-if="loading" class="text-text-secondary">Loading.</p>
 
-          <ul v-if="entry.attachments.length > 0" class="flex flex-wrap gap-2">
-            <li v-for="attachment in entry.attachments" :key="attachment.id">
-              <a
-                :href="api.attachmentUrl(attachment.id)"
-                class="border-border-default flex items-center gap-2 rounded-lg border p-2"
-              >
-                <img
-                  v-if="attachment.isImage"
-                  :src="api.thumbnailUrl(attachment.id)"
-                  :alt="attachment.filename"
-                  class="h-16 w-16 rounded object-cover"
-                />
-                <span class="text-sm">
-                  {{ attachment.filename }}
-                  <span class="text-text-secondary block">
-                    {{ formatByteSize(attachment.byteSize) }}
-                  </span>
-                </span>
-              </a>
-            </li>
-          </ul>
+      <p v-else-if="entries.length === 0" class="card text-text-secondary p-4">
+        Nothing recorded{{ search || categoryFilter ? ' that matches' : ' yet' }}.
+      </p>
 
-          <p class="text-text-secondary text-sm">
-            Recorded by {{ entry.recordedByName ?? 'someone' }},
-            {{ formatDateTimeIn(entry.recordedAt, timeZone)
-            }}<span v-if="entry.editCount > 0">
-              · edited {{ entry.editCount }} {{ entry.editCount === 1 ? 'time' : 'times' }}</span
-            >.
-          </p>
-
-          <div v-if="!entry.deletedAt" class="flex flex-wrap gap-3 text-sm">
-            <button
-              v-if="canEdit(entry)"
-              type="button"
-              class="text-primary min-h-11 underline"
-              @click="
-                editing = entry;
-                composing = false;
-              "
-            >
-              Edit
-            </button>
-            <button
-              v-if="entry.editCount > 0"
-              type="button"
-              class="text-primary min-h-11 underline"
-              @click="showHistory(entry.id)"
-            >
-              Show edit history
-            </button>
-            <button
-              v-if="canDeleteDiary(role) && confirmingDelete !== entry.id"
-              type="button"
-              class="text-state-missed min-h-11 underline"
-              @click="confirmingDelete = entry.id"
-            >
-              Delete
-            </button>
-            <template v-else-if="canDeleteDiary(role)">
-              <button
-                type="button"
-                class="text-state-missed min-h-11 underline"
-                @click="remove(entry.id)"
-              >
-                Yes, delete it
-              </button>
-              <button
-                type="button"
-                class="text-text-secondary min-h-11 underline"
-                @click="confirmingDelete = ''"
-              >
-                Cancel
-              </button>
-            </template>
-          </div>
-
-          <p v-if="confirmingDelete === entry.id" class="text-text-secondary text-sm">
-            The entry stops appearing. Nothing is removed from the record, and the deletion is
-            audited.
-          </p>
-
-          <ul v-if="revisions[entry.id]?.length" class="text-text-secondary space-y-1 text-sm">
-            <li v-for="revision in revisions[entry.id]" :key="revision.id">
-              {{ describeRevision(revision)
-              }}<span v-if="revision.reason"> Reason: "{{ revision.reason }}".</span>
-            </li>
-          </ul>
-        </template>
-      </li>
-    </ul>
+      <ul v-else class="space-y-3">
+        <li v-for="entry in entries" :key="entry.id" class="card p-4">
+          <DiaryEntryForm
+            v-if="editing?.id === entry.id"
+            :participant-id="props.participantId"
+            :participant-name="props.participantName"
+            :categories="categories"
+            :time-zone="timeZone"
+            :entry="entry"
+            @saved="afterSave"
+            @cancelled="editing = null"
+          />
+          <DiaryEntryCard
+            v-else
+            :entry="entry"
+            :time-zone="timeZone"
+            :participant-name="props.participantName"
+            :can-edit="canEdit(entry)"
+            :can-delete="canDeleteDiary(role)"
+            :revisions="revisions[entry.id]"
+            :confirming-delete="confirmingDelete === entry.id"
+            @edit="startEditing(entry)"
+            @show-history="showHistory(entry.id)"
+            @request-delete="confirmingDelete = entry.id"
+            @confirm-delete="remove(entry.id)"
+            @cancel-delete="confirmingDelete = ''"
+          />
+        </li>
+      </ul>
+    </template>
   </section>
 </template>
