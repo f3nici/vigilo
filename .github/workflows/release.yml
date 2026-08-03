@@ -1,0 +1,212 @@
+name: Release
+
+# Build and publish the images under a tag you type.
+#
+# CI already publishes every branch build under its branch name and commit sha,
+# which is what the dev box pulls to verify a change. This is the other half:
+# naming a build you intend to deploy, so a server can be pointed at
+# `TAG=v1.4.0` rather than at a 40-character sha nobody can read back over the
+# phone.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to publish, e.g. v1.4.0'
+        required: true
+        type: string
+      latest:
+        description: 'Also move the `latest` tag to this build'
+        required: false
+        default: true
+        type: boolean
+      skip_checks:
+        description: 'Publish without running the test suite (emergencies only)'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY_IMAGE_PREFIX: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/vigilo
+
+jobs:
+  # The tag is typed by a human into a box, so it is checked before it reaches
+  # a shell, a registry or a tag list. Docker's own rule is
+  # [a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}; this is deliberately narrower, because
+  # nothing here needs a tag that starts with an underscore.
+  validate:
+    name: Check the tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: The tag has to look like a tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$'; then
+            echo "Refusing \"$TAG\"."
+            echo "Use letters, numbers, dot, dash and underscore, starting with a letter or number."
+            exit 1
+          fi
+          if [ "$TAG" = "latest" ]; then
+            echo 'Refusing "latest": it is moved by the latest input, not published directly.'
+            exit 1
+          fi
+          echo "Publishing as \"$TAG\"."
+
+  checks:
+    name: Checks
+    needs: validate
+    if: ${{ !inputs.skip_checks }}
+    uses: ./.github/workflows/checks.yml
+
+  images:
+    name: Build and push images
+    runs-on: ubuntu-latest
+    needs: [validate, checks]
+    # `always()` so skipping the checks skips the job rather than cancelling
+    # the release, while a real test failure still stops it.
+    if: ${{ always() && needs.validate.result == 'success' && (needs.checks.result == 'success' || inputs.skip_checks) }}
+    permissions:
+      contents: read
+
+    strategy:
+      matrix:
+        include:
+          - name: api
+            dockerfile: packages/api/Dockerfile
+          - name: web
+            dockerfile: packages/app/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Safe to interpolate: the validate job refused anything that is not
+      # [a-zA-Z0-9][a-zA-Z0-9._-]{0,63} before this job was allowed to start.
+      - name: Tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY_IMAGE_PREFIX }}-${{ matrix.name }}
+          tags: |
+            type=raw,value=${{ inputs.tag }}
+            type=sha,format=long
+            type=raw,value=latest,enable=${{ inputs.latest }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # The same smoke test CI runs, against the tag that was just published rather
+  # than against the commit sha. A green build job says the image exists; this
+  # says it starts, migrates and serves.
+  smoke:
+    name: Smoke test the published images
+    runs-on: ubuntu-latest
+    needs: images
+
+    # Every compose call in this job needs both, so they are set once here
+    # rather than repeated on each step and eventually forgotten on one.
+    env:
+      IMAGE_PREFIX: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/vigilo
+      TAG: ${{ inputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Generate a throwaway master key
+        run: echo "MASTER_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
+      - name: Run the published images
+        env:
+          BUILD_HASH: ${{ github.sha }}
+        run: |
+          docker compose pull api web
+          docker compose up -d
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8081/api/ready | grep -q '"status":"ready"'; then
+              echo "ready"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "the stack never became ready"
+          docker compose logs
+          exit 1
+
+      - name: Serve the SPA
+        run: curl -fsS http://localhost:8081/ | grep -q '<div id="app">'
+
+      - name: index.html is never cached
+        run: |
+          # Checked on the SPA fallback, not on /index.html. The fallback is
+          # the path every real visit takes, and it is the one that would go
+          # stale without anybody noticing until a deploy did not land.
+          curl -sI http://localhost:8081/participants | grep -qi 'cache-control: no-cache, no-store'
+          curl -sI http://localhost:8081/sw.js | grep -qi 'cache-control: no-cache, no-store'
+
+      - name: The API refuses anonymous access to scoped data
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/api/v1/participants)
+          test "$code" = "401" || { echo "expected 401, got $code"; exit 1; }
+
+      - name: The break-glass CLI runs in the API container
+        run: |
+          docker compose exec -T api npm run admin -- admin:list | grep -q 'No admin accounts exist'
+          docker compose exec -T api npm run admin -- audit:verify | grep -q 'Audit chain intact'
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+  published:
+    name: Say what was published
+    runs-on: ubuntu-latest
+    needs: smoke
+    steps:
+      - name: Summary
+        env:
+          TAG: ${{ inputs.tag }}
+          PREFIX: ${{ env.REGISTRY_IMAGE_PREFIX }}
+          MOVED_LATEST: ${{ inputs.latest }}
+        run: |
+          {
+            echo "## Published"
+            echo
+            echo '```'
+            echo "$PREFIX-api:$TAG"
+            echo "$PREFIX-web:$TAG"
+            echo '```'
+            echo
+            echo "\`latest\` moved: $MOVED_LATEST"
+            echo
+            echo "Deploy with:"
+            echo
+            echo '```bash'
+            echo "TAG=$TAG docker compose pull"
+            echo "TAG=$TAG docker compose up -d"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,56 @@
+name: Checks
+
+# Format, types, lint and the whole test suite, in one place.
+#
+# Called by CI on every push and by Release before it publishes anything under
+# a version tag. Two copies of this would eventually disagree, and the copy
+# that matters is the one guarding a release.
+on:
+  workflow_call:
+
+jobs:
+  check:
+    name: Typecheck, lint and test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: vigilo
+          POSTGRES_PASSWORD: vigilo
+          POSTGRES_DB: vigilo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vigilo -d vigilo_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+        env:
+          TEST_DATABASE_URL: postgres://vigilo:vigilo@localhost:5432/vigilo_test
+
+      - name: Build the SPA
+        run: npm run build --workspace @vigilo/app

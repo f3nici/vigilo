@@ -31,7 +31,21 @@ export async function registerServiceWorker(): Promise<void> {
   try {
     registration = await navigator.serviceWorker.register(
       import.meta.env.DEV ? '/dev-sw.js?dev-sw' : '/sw.js',
-      { type: import.meta.env.DEV ? 'module' : 'classic', scope: '/' },
+      {
+        type: import.meta.env.DEV ? 'module' : 'classic',
+        scope: '/',
+        /*
+         * Always go to the network for `sw.js` itself.
+         *
+         * nginx already sends `no-store` for it, but that is the deployment we
+         * ship rather than the only one there will ever be: a reverse proxy or
+         * a CDN in front of this can rewrite response headers, and the default
+         * here (`imports`) lets the browser answer the update check from its
+         * own HTTP cache. The update a worker is waiting for would then never
+         * be found, and nothing on screen would say why.
+         */
+        updateViaCache: 'none',
+      },
     );
 
     if (registration.active && !navigator.serviceWorker.controller) {

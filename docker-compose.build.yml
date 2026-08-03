@@ -1,0 +1,19 @@
+# Build from source instead of pulling.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# For contributors and for the dev box. A deployment does not need this file:
+# it runs the images CI published, which is the same artefact that was tested,
+# rather than whatever the server's Docker happened to build that morning.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: packages/api/Dockerfile
+    image: ${IMAGE_PREFIX:-docker.io/f3nici/vigilo}-api:${TAG:-local}
+
+  web:
+    build:
+      context: .
+      dockerfile: packages/app/Dockerfile
+    image: ${IMAGE_PREFIX:-docker.io/f3nici/vigilo}-web:${TAG:-local}
