@@ -17,6 +17,7 @@ import {
   diaryRevisionSchema,
   emergencyContactSchema,
   emergencyPlanSchema,
+  entryNoteSchema,
   entryRevisionSchema,
   healthResponseSchema,
   importCheckFormsResponseSchema,
@@ -70,6 +71,8 @@ import {
   type EditEntryRequest,
   type EmergencyContact,
   type EmergencyPlan,
+  type AddEntryNoteRequest,
+  type EntryNote,
   type EntryRevision,
   type ErrorCode,
   type HealthResponse,
@@ -598,6 +601,7 @@ const regeneratedSchema = z.object({
   created: z.number(),
   preserved: z.number(),
 });
+const removedSchema = z.object({ removed: z.number(), keptWithEntry: z.number() });
 
 export async function listSchedules(participantId: string): Promise<CheckSchedule[]> {
   return z
@@ -641,10 +645,17 @@ export async function putSegments(
   );
 }
 
-export async function endSchedule(scheduleId: string): Promise<CheckSchedule> {
+/**
+ * Ends a schedule. Everything still open on it is removed with it (D97), and
+ * the response says how many, and how many were kept because somebody had
+ * already recorded against them.
+ */
+export async function endSchedule(
+  scheduleId: string,
+): Promise<{ schedule: CheckSchedule; removed: z.infer<typeof removedSchema> }> {
   return z
-    .object({ schedule: checkScheduleSchema, regenerated: regeneratedSchema })
-    .parse(await request(`/v1/schedules/${scheduleId}`, { method: 'DELETE' })).schedule;
+    .object({ schedule: checkScheduleSchema, removed: removedSchema })
+    .parse(await request(`/v1/schedules/${scheduleId}`, { method: 'DELETE' }));
 }
 
 export async function getCoveragePattern(participantId: string): Promise<CoveragePattern> {
@@ -796,6 +807,29 @@ export async function listEntryRevisions(entryId: string): Promise<EntryRevision
   return z
     .object({ revisions: z.array(entryRevisionSchema) })
     .parse(await request(`/v1/check-entries/${entryId}/revisions`)).revisions;
+}
+
+/**
+ * Notes on a recorded check (D96).
+ *
+ * Server-only, like the edit history above it and for the same reason: they
+ * are written against a record the server already holds, and there is nothing
+ * useful a device could do with a queued one.
+ */
+export async function listEntryNotes(entryId: string): Promise<EntryNote[]> {
+  return z
+    .object({ notes: z.array(entryNoteSchema) })
+    .parse(await request(`/v1/check-entries/${entryId}/notes`)).notes;
+}
+
+export async function addEntryNote(
+  entryId: string,
+  input: AddEntryNoteRequest,
+): Promise<EntryNote> {
+  return z
+    .object({ note: entryNoteSchema })
+    .parse(await request(`/v1/check-entries/${entryId}/notes`, { method: 'POST', body: input }))
+    .note;
 }
 
 export async function putMissReason(

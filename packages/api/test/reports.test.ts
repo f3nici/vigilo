@@ -452,6 +452,52 @@ describe('reports', () => {
       expect(response.body.report.total.expected).toBe(0);
     });
 
+    /** D96: the explanation travels with the check it explains. */
+    it('carries the notes added to a check', async () => {
+      const fixture = await setUp();
+      await withRecords(fixture);
+
+      const day = await api(
+        fixture.admin,
+        'get',
+        `/api/v1/reports/daily?participantId=${fixture.participantId}&date=${today()}`,
+      );
+      const recorded = (day.body.report.days[0].windows as { id: string; entryId?: string }[]).find(
+        (one) => (one as { values: unknown[] }).values.length > 0,
+      )!;
+
+      const [entry] = await h.ownerDb.execute<{ id: string }>(
+        sql`select id from check_entries where participant_id = ${fixture.participantId}::uuid`,
+      );
+
+      await api(fixture.admin, 'post', `/api/v1/check-entries/${entry!.id}/notes`).send({
+        body: 'Output low because the bag was changed early.',
+      });
+
+      const after = await api(
+        fixture.admin,
+        'get',
+        `/api/v1/reports/daily?participantId=${fixture.participantId}&date=${today()}`,
+      );
+      const window = (
+        after.body.report.days[0].windows as {
+          id: string;
+          notes: { body: string; createdByName: string | null }[];
+        }[]
+      ).find((one) => one.id === recorded.id)!;
+
+      expect(window.notes).toHaveLength(1);
+      expect(window.notes[0]!.body).toBe('Output low because the bag was changed early.');
+      expect(window.notes[0]!.createdByName).toBe('Test admin');
+
+      const pdf = await api(
+        fixture.admin,
+        'get',
+        `/api/v1/reports/daily.pdf?participantId=${fixture.participantId}&date=${today()}`,
+      ).buffer();
+      expect(pdf.status).toBe(200);
+    });
+
     it('covers a range as well as a single day', async () => {
       const fixture = await setUp();
       await schedule(fixture, fixture.participantId);

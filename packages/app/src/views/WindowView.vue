@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import {
+  canAnnotateEntries,
   checkEntrySchema,
   describeWindowStatus,
   missReasonProblem,
@@ -10,6 +11,7 @@ import {
   templateSchemaSchema,
   validateValues,
   type CheckValue,
+  type EntryNote,
   type EntryRevision,
   type MissedReasonCode,
   type TemplateSchema,
@@ -59,6 +61,15 @@ const reasonNote = ref('');
 
 const revisions = ref<EntryRevision[]>([]);
 const showHistory = ref(false);
+
+/* ------------------------------------------------------------ notes (D96) */
+
+const notes = ref<EntryNote[]>([]);
+const noteBody = ref('');
+const savingNote = ref(false);
+
+/** Only an admin writes one; every staff role reads them. */
+const canAddNote = computed(() => canAnnotateEntries(session.principal?.role ?? 'worker'));
 
 /**
  * Device-generated, and a UUID v7 rather than a v4 (CLAUDE.md).
@@ -143,6 +154,8 @@ async function load(): Promise<void> {
       chosenReason.value = window.missReason.reasonCodeId;
       reasonNote.value = window.missReason.note ?? '';
     }
+
+    await loadNotes();
   } catch (err) {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not open that window.';
   } finally {
@@ -220,6 +233,7 @@ async function save(): Promise<void> {
     entryInProgress.value = false;
     savedAt.value = new Date().toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' });
     if (showHistory.value && !queued.value) await loadHistory();
+    if (!queued.value) await loadNotes();
   } catch (err) {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not save the check.';
   } finally {
@@ -253,6 +267,44 @@ async function saveReason(): Promise<void> {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not record the reason.';
   } finally {
     saving.value = false;
+  }
+}
+
+/**
+ * The notes live on the server, like the edit history, so a device with no
+ * signal simply has none to show. That is not an error and is never reported
+ * as one (doc 06 §7): the check itself is on the device and recording it is
+ * the job.
+ */
+async function loadNotes(): Promise<void> {
+  const entryId = detail.value?.entryId ?? null;
+  if (entryId === null) {
+    notes.value = [];
+    return;
+  }
+  try {
+    notes.value = await api.listEntryNotes(entryId);
+  } catch {
+    notes.value = [];
+  }
+}
+
+async function addNote(): Promise<void> {
+  const entryId = detail.value?.entryId ?? null;
+  if (entryId === null || savingNote.value) return;
+  if (!guard.ready(needs('entry-note', noteBody.value.trim() !== '', 'Write the note first.'))) {
+    return;
+  }
+
+  savingNote.value = true;
+  error.value = '';
+  try {
+    notes.value = [...notes.value, await api.addEntryNote(entryId, { body: noteBody.value })];
+    noteBody.value = '';
+  } catch (err) {
+    error.value = err instanceof ApiRequestError ? err.message : 'Could not add the note.';
+  } finally {
+    savingNote.value = false;
   }
 }
 
@@ -443,6 +495,56 @@ function describeRevisionValue(value: unknown): string {
         <p v-else-if="showHistory" class="text-text-secondary mt-3 text-sm">
           Nothing has been edited since it was first recorded.
         </p>
+      </section>
+
+      <!--
+        Notes on the record (D96).
+
+        Beside the readings, never mixed in with them. The readings are what
+        the worker recorded; a note is what somebody said about them
+        afterwards, and it says who and when. Nothing here is coloured or
+        flagged: a note is text, not a judgement about a value.
+      -->
+      <section v-if="detail.entryId" class="card space-y-3 p-4">
+        <h2 class="text-lg font-semibold">Notes on this record</h2>
+
+        <ul v-if="notes.length > 0" class="space-y-2">
+          <li
+            v-for="note in notes"
+            :key="note.id"
+            class="border-border-default rounded-lg border p-3"
+          >
+            <p class="whitespace-pre-wrap">{{ note.body }}</p>
+            <p class="text-text-secondary mt-1 text-sm">
+              {{ note.createdByName ?? 'someone' }} · {{ formatDateTime(note.createdAt) }}
+            </p>
+          </li>
+        </ul>
+
+        <p v-else class="text-text-secondary text-sm">
+          No notes yet. The check reads exactly as it was recorded.
+        </p>
+
+        <template v-if="canAddNote">
+          <div>
+            <label class="field-label" for="entry-note">Add a note</label>
+            <textarea
+              id="entry-note"
+              v-model="noteBody"
+              class="field min-h-20"
+              maxlength="2000"
+              :aria-invalid="guard.invalid('entry-note')"
+              @input="guard.clear()"
+            />
+            <p class="text-text-secondary mt-1 text-sm">
+              This explains the record, it does not change it. Once added it stays.
+            </p>
+          </div>
+
+          <button type="button" class="btn btn-primary" :disabled="savingNote" @click="addNote">
+            {{ savingNote ? 'Adding…' : 'Add note' }}
+          </button>
+        </template>
       </section>
     </template>
   </div>

@@ -200,11 +200,28 @@ async function save(): Promise<void> {
   }
 }
 
+/**
+ * Ending a schedule takes every window still open with it (D97), including the
+ * one running right now, so the confirm says so before anybody presses it.
+ * What is kept is what somebody already recorded against.
+ */
 async function end(schedule: CheckSchedule): Promise<void> {
-  if (!confirm(`End "${schedule.name}"? Past windows and recorded checks are kept.`)) return;
+  if (
+    !confirm(
+      `End "${schedule.name}"? Any check still waiting to be done is removed, including one in its window now. Past windows and anything already recorded are kept.`,
+    )
+  ) {
+    return;
+  }
+  error.value = '';
   try {
-    await api.endSchedule(schedule.id);
+    const { removed } = await api.endSchedule(schedule.id);
     schedules.value = await api.listSchedules(participantId.value);
+    notice.value =
+      `Ended. ${removed.removed} ${removed.removed === 1 ? 'check' : 'checks'} still waiting were removed` +
+      (removed.keptWithEntry > 0
+        ? `, and ${removed.keptWithEntry} kept because somebody had already recorded against ${removed.keptWithEntry === 1 ? 'it' : 'them'}.`
+        : '.');
   } catch (err) {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not end the schedule.';
   }

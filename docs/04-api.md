@@ -134,6 +134,12 @@ Segment changes regenerate future windows only. A window that already holds an
 entry is never destroyed, and `entries_affected` in the preview reports any that
 would be orphaned so the admin sees it before saving.
 
+`DELETE /schedules/:id` ends a schedule and is not the same operation. It clears
+away **every window that has not closed**, the one in progress included, because
+the admin has said stop asking for this form (D97). A window already holding an
+entry is kept, complete or partial. It answers
+`{ "schedule": …, "removed": { "removed": n, "keptWithEntry": n } }`.
+
 ## 7. Windows and entries
 
 | Method | Path | Notes |
@@ -143,6 +149,8 @@ would be orphaned so the admin sees it before saving.
 | PUT | `/windows/:id/entry` | upsert by client-supplied entry id. Partial payloads allowed, only the supplied fields are written |
 | PATCH | `/check-entries/:id` | edit after submission, writes revisions |
 | GET | `/check-entries/:id/revisions` | edit history |
+| GET | `/check-entries/:id/notes` | notes added afterwards, oldest first. Every staff role |
+| POST | `/check-entries/:id/notes` | adds one. Admin only, append-only, `{ "body": "…" }` (D96) |
 | PUT | `/windows/:id/miss-reason` | reason code plus optional note |
 | GET | `/me/windows/due?within=` | every window across the user's assigned participants closing soon. Drives the home screen |
 

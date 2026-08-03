@@ -314,6 +314,22 @@ export const dailyEntryValueSchema = z.object({
 
 export type DailyEntryValue = z.infer<typeof dailyEntryValueSchema>;
 
+/**
+ * A note an admin added to a recorded check afterwards (D96).
+ *
+ * It travels with the check on the report because the report is the copy
+ * somebody reads months later, and an explanation nobody can see is not an
+ * explanation. It is never a value: it is rendered under the readings, with
+ * who wrote it and when.
+ */
+export const dailyEntryNoteSchema = z.object({
+  body: z.string(),
+  createdByName: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export type DailyEntryNote = z.infer<typeof dailyEntryNoteSchema>;
+
 export const dailyWindowSchema = z.object({
   id: z.string(),
   startsAt: z.string(),
@@ -327,6 +343,8 @@ export const dailyWindowSchema = z.object({
   recordedAt: z.string().nullable(),
   editCount: z.number(),
   values: z.array(dailyEntryValueSchema),
+  /** Added after the check was recorded, oldest first (D96). */
+  notes: z.array(dailyEntryNoteSchema).default([]),
   missReason: z.object({ label: z.string(), note: z.string().nullable() }).nullable(),
 });
 
@@ -397,6 +415,8 @@ export const dailyUnscheduledCheckSchema = z.object({
   recordedByName: z.string().nullable(),
   editCount: z.number(),
   values: z.array(dailyEntryValueSchema),
+  /** Added after the check was recorded, oldest first (D96). */
+  notes: z.array(dailyEntryNoteSchema).default([]),
 });
 
 export type DailyUnscheduledCheck = z.infer<typeof dailyUnscheduledCheckSchema>;

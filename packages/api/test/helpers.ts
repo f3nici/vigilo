@@ -129,6 +129,7 @@ export async function resetData(ownerDb: Database): Promise<void> {
       participant_alerts,
       emergency_contacts,
       emergency_plans,
+      check_entry_notes,
       check_entry_revisions,
       check_entry_values,
       check_entries,

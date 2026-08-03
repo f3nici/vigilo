@@ -104,6 +104,20 @@ export function canManageReasonCodes(role: Role): boolean {
 }
 
 /**
+ * Adding a note to a recorded check (D96).
+ *
+ * Admin only, and deliberately not the same list as `canEditOthersEntries`. A
+ * note is not a correction: the values stay exactly as the worker recorded
+ * them, and this writes a separate, append-only line saying what somebody
+ * looking at the record afterwards needs to know. Reading them is every staff
+ * role, because the explanation is worth nothing if only the person who wrote
+ * it can see it.
+ */
+export function canAnnotateEntries(role: Role): boolean {
+  return role === 'admin';
+}
+
+/**
  * Care plans (doc 01 §3.6, §7.1).
  *
  * A nurse authors and publishes; a team leader does not. Clinical authority and

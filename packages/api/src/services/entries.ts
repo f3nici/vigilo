@@ -5,6 +5,8 @@ import {
   canBackfillPastCutoff,
   canEditOthersEntries,
   isEntryComplete,
+  type AddEntryNoteRequest,
+  type EntryNote,
   isLate,
   lateByMinutes,
   missReasonProblem,
@@ -24,6 +26,7 @@ import {
 import type { Database } from '../db/client.js';
 import {
   checkEntries,
+  checkEntryNotes,
   checkEntryRevisions,
   checkEntryValues,
   checkTemplateVersions,
@@ -39,6 +42,7 @@ import type { KeyRing } from '../crypto/keys.js';
 import { decryptField, decryptOptional, encryptField, encryptOptional } from '../crypto/fields.js';
 import { parseSchema, publishedVersionFor } from './templates.js';
 import {
+  ENTRY_NOTE_COLUMN,
   MISS_NOTE_COLUMN,
   VALUE_TEXT_COLUMN,
   recomputeWindowStatus,
@@ -680,6 +684,89 @@ export async function listRevisions(
       reason: revision.reason,
     };
   });
+}
+
+/* ------------------------------------------------------------ entry notes */
+
+/**
+ * The notes on one entry, oldest first (D96).
+ *
+ * Append-only, so this is the whole story in the order it was written. A
+ * reader follows it down the page the way it accumulated.
+ */
+export async function listEntryNotes(
+  db: Database,
+  keyRing: KeyRing,
+  entryId: string,
+): Promise<EntryNote[]> {
+  const rows = await db
+    .select({ note: checkEntryNotes, createdByName: users.displayName })
+    .from(checkEntryNotes)
+    .leftJoin(users, eq(users.id, checkEntryNotes.createdBy))
+    .where(eq(checkEntryNotes.entryId, entryId))
+    .orderBy(asc(checkEntryNotes.createdAt));
+
+  return rows.map(({ note, createdByName }) => ({
+    id: note.id,
+    entryId: note.entryId,
+    body: decryptField(keyRing, ENTRY_NOTE_COLUMN, note.bodyEnc),
+    createdBy: note.createdBy,
+    createdByName,
+    createdAt: note.createdAt.toISOString(),
+  }));
+}
+
+/**
+ * Adds one (D96).
+ *
+ * Nothing about the entry changes: no revision, no edit count, no window
+ * recompute. A note explains a record, it does not alter one, and treating it
+ * as an edit would put "edited twice" on a check nobody touched.
+ */
+export async function addEntryNote(
+  db: Database,
+  keyRing: KeyRing,
+  entryId: string,
+  request: AddEntryNoteRequest,
+  principal: EntryPrincipal,
+  actor: AuditActor,
+): Promise<EntryNote> {
+  const entry = await getEntry(db, entryId);
+
+  const [row] = await db
+    .insert(checkEntryNotes)
+    .values({
+      entryId,
+      bodyEnc: encryptField(keyRing, ENTRY_NOTE_COLUMN, request.body),
+      createdBy: principal.userId,
+    })
+    .returning();
+
+  await recordAudit(db, {
+    action: 'check_entry.note',
+    actor,
+    entityType: 'check_entry',
+    entityId: entryId,
+    participantId: entry.participantId,
+    // That a note was added and how long it was, never what it said: it is
+    // free text about a person and the audit log is not where that lives.
+    metadata: { noteId: row!.id, length: request.body.length },
+  });
+
+  const [author] = await db
+    .select({ displayName: users.displayName })
+    .from(users)
+    .where(eq(users.id, principal.userId))
+    .limit(1);
+
+  return {
+    id: row!.id,
+    entryId,
+    body: decryptField(keyRing, ENTRY_NOTE_COLUMN, row!.bodyEnc),
+    createdBy: row!.createdBy,
+    createdByName: author?.displayName ?? null,
+    createdAt: row!.createdAt.toISOString(),
+  };
 }
 
 export async function getEntry(db: Database, entryId: string): Promise<CheckEntryRow> {
