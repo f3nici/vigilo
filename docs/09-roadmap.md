@@ -10,7 +10,7 @@ They are sequencing guides, not commitments.
 
 ---
 
-## Phase 0: Foundations
+## Phase 0: Foundations (done)
 
 **Goal:** an empty but correct skeleton that deploys.
 
@@ -32,7 +32,7 @@ CI is green, and the pushed image runs.
 
 ---
 
-## Phase 1: Identity and access
+## Phase 1: Identity and access (done)
 
 **Goal:** people can sign in and the access model is correct before any clinical
 data exists.
@@ -60,7 +60,7 @@ encryption onto existing tables is far more expensive than building on them.
 
 ---
 
-## Phase 2: Participants
+## Phase 2: Participants (done)
 
 - Participant CRUD with encrypted fields and the NDIS blind index.
 - Alerts, emergency contacts, emergency plans.
@@ -73,7 +73,7 @@ sees exactly that participant and nothing else.
 
 ---
 
-## Phase 3: Checks (the core)
+## Phase 3: Checks (the core) (done)
 
 The biggest phase and the reason the product exists.
 
@@ -99,7 +99,7 @@ windows correctly showing as not expected.
 
 ---
 
-## Phase 4: Diary
+## Phase 4: Diary (done)
 
 - Categories, entries, occurred-at separate from created-at.
 - Attachments: upload, encryption at rest, EXIF stripping, thumbnails, streamed
@@ -113,7 +113,7 @@ together, with photos, and edits show as edits.
 
 ---
 
-## Phase 5: PWA and offline sync
+## Phase 5: PWA and offline sync (done)
 
 The riskiest phase. Budget for it. This is what puts the app in workers' hands.
 
@@ -148,7 +148,7 @@ diary, offline sync. Everything after this is additive.
 
 ---
 
-## Phase 6: Reports
+## Phase 6: Reports (done)
 
 - Daily participant report PDF, single day and date range.
 - Trend charts for numeric fields, gaps preserved not interpolated.
@@ -201,7 +201,7 @@ Must complete before any real participant record is entered.
 
 ---
 
-## Phase 11: Native Android
+## Phase 11: Native Android (On-Hold)
 
 The apps come last. Everything they need already exists.
 
@@ -219,7 +219,7 @@ native build, and the Play Store build is installed and recording checks.
 
 ---
 
-## Phase 12: Native iOS
+## Phase 12: Native iOS (On-Hold)
 
 **Blocked. No Mac, no Apple Developer account, no signing setup. See doc 10 Q10.**
 
@@ -235,16 +235,6 @@ about store presence and storage durability, not about giving them access. That
 is the point of the ordering.
 
 ---
-
-## Suggested order of attack
-
-Phases 0 to 5 are strictly sequential and end at the v1 line. After that, 6
-(reports) usually matters most to admins, and 7 to 9 can be reordered to suit.
-
-Phase 10 gates real data. Phases 11 and 12 are optional in the sense that the
-product works without them, and worth doing for store presence, storage
-durability on iOS, and reliable background sync. Phase 12 can start whenever the
-Mac problem is solved.
 
 ## Standing rules
 
