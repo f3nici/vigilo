@@ -49,6 +49,59 @@ onMounted(load);
 
 const guard = useFormGuard();
 
+/* --------------------------------------------------------------- renaming */
+
+/**
+ * Renaming a form.
+ *
+ * The name and the description are the two things about a form that are not
+ * versioned, so changing them touches no record: entries point at a version and
+ * a version holds the field set. An import that hit a name collision arrives
+ * called "something (imported)" (D91), which is the honest thing for it to do
+ * and a terrible thing to leave on a form staff will read for years.
+ */
+const renamingId = ref<string | null>(null);
+const renameName = ref('');
+const renameDescription = ref('');
+const renaming = ref(false);
+
+function startRename(template: CheckTemplate): void {
+  guard.clear();
+  error.value = '';
+  imported.value = [];
+  renamingId.value = template.id;
+  renameName.value = template.name;
+  renameDescription.value = template.description ?? '';
+}
+
+function cancelRename(): void {
+  renamingId.value = null;
+  guard.clear();
+}
+
+async function saveRename(): Promise<void> {
+  const id = renamingId.value;
+  if (id === null || renaming.value) return;
+  if (!guard.ready(needsText('rename-name', renameName.value, 'A check form needs a name.'))) {
+    return;
+  }
+
+  renaming.value = true;
+  error.value = '';
+  try {
+    await api.updateTemplate(id, {
+      name: renameName.value,
+      description: renameDescription.value.trim() === '' ? null : renameDescription.value,
+    });
+    renamingId.value = null;
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiRequestError ? err.message : 'Could not rename the check form.';
+  } finally {
+    renaming.value = false;
+  }
+}
+
 /* ------------------------------------------------------- export and import */
 
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -264,7 +317,8 @@ async function create(): Promise<void> {
         <li v-for="form in imported" :key="form.id">
           Imported <span class="font-medium">{{ form.name }}</span>
           <span v-if="form.name !== form.originalName" class="text-text-secondary">
-            (a form called "{{ form.originalName }}" was already here, so this one was renamed)
+            (a form called "{{ form.originalName }}" was already here, so this one was renamed.
+            Rename it to whatever you want on its row below)
           </span>
           <span class="text-text-secondary">
             · {{ form.fieldCount }} {{ form.fieldCount === 1 ? 'field' : 'fields' }}, draft
@@ -332,6 +386,14 @@ async function create(): Promise<void> {
               v-if="canManage"
               type="button"
               class="btn border-border-default border"
+              @click="startRename(template)"
+            >
+              Rename
+            </button>
+            <button
+              v-if="canManage"
+              type="button"
+              class="btn border-border-default border"
               :disabled="busy"
               @click="exportOne(template)"
             >
@@ -339,6 +401,50 @@ async function create(): Promise<void> {
             </button>
           </div>
         </div>
+
+        <!--
+          The name and the description, in place. Neither is versioned, so this
+          changes no record: an entry points at a version and a version holds
+          the field set. Publishing history is untouched by it.
+        -->
+        <form
+          v-if="renamingId === template.id"
+          class="border-border-default mt-3 space-y-2 rounded-lg border p-3"
+          @submit.prevent="saveRename"
+        >
+          <div class="flex flex-wrap items-end gap-3">
+            <div class="min-w-56 flex-1">
+              <label class="field-label" for="rename-name">Name</label>
+              <input
+                id="rename-name"
+                v-model="renameName"
+                class="field"
+                type="text"
+                :aria-invalid="guard.invalid('rename-name')"
+                @input="guard.clear()"
+              />
+            </div>
+            <div class="min-w-56 flex-1">
+              <label class="field-label" for="rename-description">Description</label>
+              <input
+                id="rename-description"
+                v-model="renameDescription"
+                class="field"
+                type="text"
+              />
+            </div>
+            <button class="btn btn-primary" type="submit" :disabled="renaming">
+              {{ renaming ? 'Saving…' : 'Save' }}
+            </button>
+            <button type="button" class="btn border-border-default border" @click="cancelRename">
+              Cancel
+            </button>
+          </div>
+          <p class="text-text-secondary text-sm">
+            What the team calls this form. Records already entered are not affected, and neither is
+            the published version.
+          </p>
+        </form>
 
         <p class="text-text-secondary mt-2 text-sm">
           {{ template.scheduleCount }}

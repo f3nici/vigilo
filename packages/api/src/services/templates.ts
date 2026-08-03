@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import {
   buildCheckFormExport,
   diffTemplateSchemas,
@@ -447,6 +447,31 @@ export async function updateTemplate(
         'conflict',
         'Schedules are still using this check form. End those schedules first.',
       );
+    }
+  }
+
+  /*
+   * Two active forms with the same name is a schedule pointed at the wrong one.
+   * An import goes out of its way to avoid that by marking a collision (D91),
+   * and a rename must not be the way back into it. Retired forms are left out:
+   * they cannot be scheduled, and a name freed by retiring one is a name worth
+   * reusing.
+   */
+  if (request.name !== undefined && request.name !== row.name) {
+    const [clash] = await db
+      .select({ id: checkTemplates.id })
+      .from(checkTemplates)
+      .where(
+        and(
+          eq(checkTemplates.name, request.name),
+          eq(checkTemplates.status, 'active'),
+          ne(checkTemplates.id, id),
+        ),
+      )
+      .limit(1);
+
+    if (clash) {
+      throw new HttpError('conflict', 'Another check form is already called that.');
     }
   }
 

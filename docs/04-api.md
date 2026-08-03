@@ -85,6 +85,7 @@ device learns to download or purge that participant.
 | POST | `/check-templates` | admin, nurse |
 | GET | `/check-templates/:id/versions` | history |
 | POST | `/check-templates/:id/versions` | creates a draft from the current version |
+| PATCH | `/check-templates/:id` | name, description, retire. A name another active form holds rejects with `conflict` |
 | PATCH | `/check-template-versions/:id` | draft only. Published versions reject with `conflict` |
 | POST | `/check-template-versions/:id/publish` | validates the schema, supersedes the previous version |
 | GET | `/check-template-versions/:id` | the frozen schema, needed to render historical entries |
