@@ -14,51 +14,11 @@ env:
   REGISTRY_IMAGE_PREFIX: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/vigilo
 
 jobs:
+  # Shared with the Release workflow, so a release cannot be published against
+  # a weaker set of checks than a branch push gets.
   check:
-    name: Typecheck, lint and test
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: vigilo
-          POSTGRES_PASSWORD: vigilo
-          POSTGRES_DB: vigilo_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U vigilo -d vigilo_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - run: npm ci
-
-      - name: Format check
-        run: npm run format:check
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Test
-        run: npm test
-        env:
-          TEST_DATABASE_URL: postgres://vigilo:vigilo@localhost:5432/vigilo_test
-
-      - name: Build the SPA
-        run: npm run build --workspace @vigilo/app
+    name: Checks
+    uses: ./.github/workflows/checks.yml
 
   images:
     name: Build and push images
@@ -136,7 +96,7 @@ jobs:
           BUILD_HASH: ${{ github.sha }}
         run: |
           docker compose pull api web
-          docker compose up -d --no-build
+          docker compose up -d
           for i in $(seq 1 30); do
             if curl -fsS http://localhost:8081/api/ready | grep -q '"status":"ready"'; then
               echo "ready"

@@ -1,3 +1,10 @@
+# Vigilo, running from the published images.
+#
+# `docker compose up -d` pulls and runs; nothing is built here. Set TAG to pin
+# a release (`TAG=v1.4.0`), or leave it and get `latest`.
+#
+# To build from source instead, add the override:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 name: vigilo
 
 services:
@@ -17,10 +24,7 @@ services:
       retries: 20
 
   api:
-    build:
-      context: .
-      dockerfile: packages/api/Dockerfile
-    image: ${IMAGE_PREFIX:-docker.io/f3nici/vigilo}-api:${TAG:-local}
+    image: ${IMAGE_PREFIX:-docker.io/f3nici/vigilo}-api:${TAG:-latest}
     restart: unless-stopped
     depends_on:
       db:
@@ -70,10 +74,7 @@ services:
       start_period: 20s
 
   web:
-    build:
-      context: .
-      dockerfile: packages/app/Dockerfile
-    image: ${IMAGE_PREFIX:-docker.io/f3nici/vigilo}-web:${TAG:-local}
+    image: ${IMAGE_PREFIX:-docker.io/f3nici/vigilo}-web:${TAG:-latest}
     restart: unless-stopped
     depends_on:
       - api
