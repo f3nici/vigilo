@@ -141,6 +141,13 @@
       "when": 1785369163775,
       "tag": "0019_unscheduled_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1785369163776,
+      "tag": "0020_medication_amount_given",
+      "breakpoints": true
     }
   ]
 }

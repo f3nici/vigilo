@@ -346,6 +346,7 @@ export function witnessIsRequired(status: AdministrationStatus, requiresWitness:
 export type AdministrationCheck = {
   status: AdministrationStatus;
   note: string | null;
+  amountGiven?: string | null;
   witnessedBy: string | null;
   requiresWitness: boolean;
   recordedBy: string;
@@ -367,6 +368,13 @@ export function administrationProblem(input: AdministrationCheck): string | null
       : 'Say why the dose was withheld.';
   }
 
+  // An amount is a statement that something went in, so it cannot sit on a
+  // sign-off that says nothing did. Refused with "5 mg" against it is a record
+  // that reads two ways, and nobody later can tell which one was meant.
+  if ((input.amountGiven ?? '').trim() !== '' && !medicationWasTaken(input.status)) {
+    return 'Nothing was given, so there is no amount to record.';
+  }
+
   if (witnessIsRequired(input.status, input.requiresWitness) && input.witnessedBy === null) {
     return 'This medication needs a second person to witness the dose.';
   }
@@ -378,6 +386,33 @@ export function administrationProblem(input: AdministrationCheck): string | null
   return null;
 }
 
+/**
+ * How much actually went in, in the worker's own words.
+ *
+ * The medication carries what is charted ("5 mg", "1 to 2 tablets"). This
+ * carries what was given, which is not always the same thing: half a tablet
+ * because that is what was left, 7.5 mL drawn up rather than 10. It is free
+ * text for the reason the charted dose is (doc above): nothing converts it,
+ * totals it or compares it to the chart, because software that does arithmetic
+ * on doses is software that can get a dose wrong.
+ *
+ * Optional, and blank means the record does not say. Nothing infers "the
+ * charted amount" from an empty box, because that would be the software
+ * writing a clinical record nobody typed.
+ */
+export const amountGivenSchema = z.string().trim().max(100).nullable().default(null);
+
+/**
+ * The charted dose, and what was actually given when that was written down and
+ * differs from it. One implementation so the chart, the history and the PDF
+ * all say it the same way.
+ */
+export function describeAmountGiven(charted: string, amountGiven: string | null): string {
+  const given = (amountGiven ?? '').trim();
+  if (given === '' || given === charted.trim()) return charted;
+  return `${charted}, gave ${given}`;
+}
+
 export const signOffRequestSchema = z
   .object({
     /** UUID v7 from the device, so a replay updates rather than duplicates. */
@@ -386,6 +421,7 @@ export const signOffRequestSchema = z
     /** When the dose was actually given, which is not when it was typed in. */
     administeredAt: isoDateTimeSchema,
     recordedAt: isoDateTimeSchema,
+    amountGiven: amountGivenSchema,
     note: z.string().trim().max(2000).nullable().default(null),
     witnessedBy: z.string().uuid().nullable().default(null),
   })
@@ -409,6 +445,7 @@ export const recordPrnRequestSchema = z
     status: administrationStatusSchema,
     administeredAt: isoDateTimeSchema,
     recordedAt: isoDateTimeSchema,
+    amountGiven: amountGivenSchema,
     reason: z.string().trim().min(1).max(2000),
     outcome: z.string().trim().max(2000).nullable().default(null),
     note: z.string().trim().max(2000).nullable().default(null),
@@ -438,6 +475,8 @@ export const medicationAdministrationSchema = z.object({
   administeredAt: z.string(),
   recordedAt: z.string(),
   receivedAt: z.string(),
+  /** What was actually given. Null when the worker did not say. */
+  amountGiven: z.string().nullable(),
   note: z.string().nullable(),
   reason: z.string().nullable(),
   outcome: z.string().nullable(),

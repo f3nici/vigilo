@@ -5,6 +5,7 @@ import {
   canManageMedications,
   canSignOffMedication,
   describeAdministrationStatus,
+  describeAmountGiven,
   describeMedication,
   doseSortRank,
   localDateOf,
@@ -177,7 +178,9 @@ onMounted(load);
           <ul class="mt-3 space-y-2 text-sm">
             <li v-for="one in administrations" :key="one.id">
               <span class="tabular">{{ formatDateTimeIn(one.administeredAt, timeZone) }}</span>
-              <span class="ml-2 font-medium">{{ one.medicationName }} {{ one.dose }}</span>
+              <span class="ml-2 font-medium">
+                {{ one.medicationName }} {{ describeAmountGiven(one.dose, one.amountGiven) }}
+              </span>
               <span class="text-text-secondary ml-2">
                 {{ describeAdministrationStatus(one.status) }}
               </span>

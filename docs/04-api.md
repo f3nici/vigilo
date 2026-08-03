@@ -85,9 +85,12 @@ device learns to download or purge that participant.
 | POST | `/check-templates` | admin, nurse |
 | GET | `/check-templates/:id/versions` | history |
 | POST | `/check-templates/:id/versions` | creates a draft from the current version |
+| PATCH | `/check-templates/:id` | name, description, retire. A name another active form holds rejects with `conflict` |
 | PATCH | `/check-template-versions/:id` | draft only. Published versions reject with `conflict` |
 | POST | `/check-template-versions/:id/publish` | validates the schema, supersedes the previous version |
 | GET | `/check-template-versions/:id` | the frozen schema, needed to render historical entries |
+| GET | `/check-templates/export` | admin, nurse. Every active form, or `?ids=a,b,c`, as a portable document (D91) |
+| POST | `/check-templates/import` | admin, nurse. Creates one unpublished draft per form in the document. All or nothing |
 
 Publish validation: keys unique and immutable across versions, at least one
 field, options non-empty for choice types, units present for numbers, no
@@ -201,6 +204,10 @@ available.
 | GET | `/participants/:id/medication-doses?from=&to=` |
 | PUT | `/medication-doses/:id/administration` |
 | POST | `/participants/:id/medication-administrations` (PRN) |
+
+A sign-off carries `amountGiven`: free text for what actually went in, when
+that differs from the charted dose (D92). Optional, and never inferred from a
+blank. It is refused on a status that says nothing was given.
 | GET/POST/PATCH | `/participants/:id/incidents`, `/incidents/:id`, `/incidents/:id/actions` |
 | POST | `/incidents/:id/close` |
 | GET | `/incidents/:id/pdf` |

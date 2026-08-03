@@ -1,12 +1,18 @@
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
 import {
+  buildCheckFormExport,
   diffTemplateSchemas,
   templateSchemaSchema,
+  uniqueFormName,
   validateAgainstPublished,
   validateTemplateSchema,
+  type CheckFormDocument,
+  type CheckFormExport,
   type CheckTemplate,
   type CreateTemplateRequest,
   type FieldType,
+  type ImportCheckFormsRequest,
+  type ImportedForm,
   type PublishPreview,
   type TemplateSchema,
   type TemplateVersion,
@@ -259,6 +265,134 @@ export async function publishedVersionFor(
   return row ?? null;
 }
 
+/* ------------------------------------------------------- export and import */
+
+/**
+ * The forms as a portable document (D91).
+ *
+ * The published version is what travels, because that is the form the team
+ * actually uses. A template that has never been published falls back to its
+ * draft, so a form somebody is halfway through building can still be moved to
+ * another box to finish, and one with neither is skipped rather than exported
+ * as an empty shell.
+ */
+export async function exportTemplates(
+  db: Database,
+  templateIds: string[] | 'all',
+  actor: AuditActor,
+): Promise<CheckFormExport> {
+  const rows = await db
+    .select()
+    .from(checkTemplates)
+    .where(
+      templateIds === 'all'
+        ? eq(checkTemplates.status, 'active')
+        : inArray(checkTemplates.id, templateIds),
+    )
+    .orderBy(asc(checkTemplates.name));
+
+  if (templateIds !== 'all' && rows.length !== templateIds.length) {
+    throw new HttpError('not_found', 'One of those check forms does not exist.');
+  }
+
+  const versions = await versionsOf(
+    db,
+    rows.map((row) => row.id),
+  );
+
+  const forms: CheckFormDocument[] = [];
+  for (const row of rows) {
+    const all = versions.get(row.id)?.rows ?? [];
+    const source =
+      all.find((one) => one.status === 'published') ?? all.find((one) => one.status === 'draft');
+    if (!source) continue;
+
+    forms.push({ name: row.name, description: row.description, schema: parseSchema(source) });
+  }
+
+  if (forms.length === 0) {
+    throw new HttpError(
+      'validation_failed',
+      'There is nothing to export yet. Build a check form first.',
+    );
+  }
+
+  await recordAudit(db, {
+    action: 'template.export',
+    actor,
+    entityType: 'check_template',
+    entityId: null,
+    metadata: { formCount: forms.length, names: forms.map((form) => form.name) },
+  });
+
+  return buildCheckFormExport(forms, new Date());
+}
+
+/**
+ * Creates a form per document in the file, always as an unpublished draft.
+ *
+ * Never an update to an existing form, even when the names match. A published
+ * version has entries bound to it and an import is a file somebody dropped on a
+ * screen: those two facts must never meet. A colliding name is marked instead,
+ * so importing the same file twice is untidy rather than destructive.
+ *
+ * The whole file lands or none of it does. Half an import is worse than a
+ * failed one, because the admin has to work out which half.
+ */
+export async function importTemplates(
+  db: Database,
+  request: ImportCheckFormsRequest,
+  createdBy: string,
+  actor: AuditActor,
+): Promise<ImportedForm[]> {
+  const existing = await db.select({ name: checkTemplates.name }).from(checkTemplates);
+  const taken = new Set(existing.map((row) => row.name));
+
+  const imported = await db.transaction(async (tx) => {
+    const created: ImportedForm[] = [];
+
+    for (const form of request.forms) {
+      const name = uniqueFormName(form.name, taken);
+      taken.add(name);
+
+      const [template] = await tx
+        .insert(checkTemplates)
+        .values({ name, description: form.description, createdBy })
+        .returning();
+
+      await tx.insert(checkTemplateVersions).values({
+        templateId: template!.id,
+        version: 1,
+        schema: form.schema,
+        status: 'draft',
+      });
+
+      created.push({
+        id: template!.id,
+        name,
+        originalName: form.name,
+        fieldCount: form.schema.fields.length,
+      });
+    }
+
+    return created;
+  });
+
+  await recordAudit(db, {
+    action: 'template.import',
+    actor,
+    entityType: 'check_template',
+    entityId: null,
+    metadata: {
+      formCount: imported.length,
+      names: imported.map((form) => form.name),
+      renamed: imported.filter((form) => form.name !== form.originalName).length,
+    },
+  });
+
+  return imported;
+}
+
 export async function createTemplate(
   db: Database,
   request: CreateTemplateRequest,
@@ -313,6 +447,31 @@ export async function updateTemplate(
         'conflict',
         'Schedules are still using this check form. End those schedules first.',
       );
+    }
+  }
+
+  /*
+   * Two active forms with the same name is a schedule pointed at the wrong one.
+   * An import goes out of its way to avoid that by marking a collision (D91),
+   * and a rename must not be the way back into it. Retired forms are left out:
+   * they cannot be scheduled, and a name freed by retiring one is a name worth
+   * reusing.
+   */
+  if (request.name !== undefined && request.name !== row.name) {
+    const [clash] = await db
+      .select({ id: checkTemplates.id })
+      .from(checkTemplates)
+      .where(
+        and(
+          eq(checkTemplates.name, request.name),
+          eq(checkTemplates.status, 'active'),
+          ne(checkTemplates.id, id),
+        ),
+      )
+      .limit(1);
+
+    if (clash) {
+      throw new HttpError('conflict', 'Another check form is already called that.');
     }
   }
 

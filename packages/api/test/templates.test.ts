@@ -346,6 +346,217 @@ describe('check templates', () => {
     expect(response.body.error.message).toContain('still using this check form');
   });
 
+  /* -------------------------------------------------- export and import */
+
+  it('exports the published form as a portable document', async () => {
+    const session = await adminSession();
+    await publishedTemplate(session);
+
+    const response = await api(session, 'get', '/api/v1/check-templates/export');
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-disposition']).toContain('vigilo-check-forms-');
+    expect(response.body.kind).toBe('vigilo.check-forms');
+    expect(response.body.version).toBe(1);
+    expect(response.body.forms).toHaveLength(1);
+    expect(response.body.forms[0].name).toBe('Vent observations');
+    expect(response.body.forms[0].schema.fields).toHaveLength(4);
+    // Identity stays behind: an imported form is a new form where it lands.
+    expect(Object.keys(response.body.forms[0]).sort()).toEqual(['description', 'name', 'schema']);
+  });
+
+  it('exports a chosen form rather than all of them', async () => {
+    const session = await adminSession();
+    const { templateId } = await publishedTemplate(session);
+    await api(session, 'post', '/api/v1/check-templates').send({ name: 'Something else' });
+
+    const response = await api(session, 'get', `/api/v1/check-templates/export?ids=${templateId}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.forms.map((form: { name: string }) => form.name)).toEqual([
+      'Vent observations',
+    ]);
+  });
+
+  it('imports a document as a draft, never as something workers can see', async () => {
+    const session = await adminSession();
+    await publishedTemplate(session);
+    const exported = await api(session, 'get', '/api/v1/check-templates/export');
+
+    // A fresh installation: everything gone, the file is all that is left.
+    await resetData(h.ownerDb);
+    const fresh = await adminSession();
+
+    const response = await api(fresh, 'post', '/api/v1/check-templates/import').send(exported.body);
+
+    expect(response.status).toBe(201);
+    expect(response.body.imported).toHaveLength(1);
+    expect(response.body.imported[0].name).toBe('Vent observations');
+    expect(response.body.imported[0].fieldCount).toBe(4);
+
+    const listed = await api(fresh, 'get', '/api/v1/check-templates');
+    const template = listed.body.templates[0];
+    expect(template.publishedVersion).toBeNull();
+    expect(template.draftVersion.schema.fields).toHaveLength(4);
+  });
+
+  /** Importing the same file twice is untidy, never destructive. */
+  it('marks a name collision instead of touching the form already there', async () => {
+    const session = await adminSession();
+    const { templateId } = await publishedTemplate(session);
+    const exported = await api(session, 'get', '/api/v1/check-templates/export');
+
+    const response = await api(session, 'post', '/api/v1/check-templates/import').send(
+      exported.body,
+    );
+
+    expect(response.status).toBe(201);
+    expect(response.body.imported[0].name).toBe('Vent observations (imported)');
+    expect(response.body.imported[0].originalName).toBe('Vent observations');
+    expect(response.body.imported[0].id).not.toBe(templateId);
+
+    const original = await api(session, 'get', `/api/v1/check-templates/${templateId}`);
+    expect(original.body.template.publishedVersion.version).toBe(1);
+    expect(original.body.template.draftVersion).toBeNull();
+  });
+
+  it('refuses a file it cannot read rather than importing half of it', async () => {
+    const session = await adminSession();
+
+    const wrongVersion = await api(session, 'post', '/api/v1/check-templates/import').send({
+      kind: 'vigilo.check-forms',
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      forms: [{ name: 'From the future', description: null, schema: { fields: [] } }],
+    });
+    expect(wrongVersion.status).toBe(422);
+
+    const smuggled = await api(session, 'post', '/api/v1/check-templates/import').send({
+      kind: 'vigilo.check-forms',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      forms: [
+        { name: 'One good form', description: null, schema: { fields: [] } },
+        {
+          name: 'One bad form',
+          description: null,
+          // D14: there is nowhere in the schema for a range, including here.
+          schema: {
+            fields: [
+              {
+                key: 'spo2',
+                label: 'SpO2',
+                type: 'number',
+                unit: '%',
+                decimals: 0,
+                sort: 10,
+                required: true,
+                normalRange: [95, 100],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    expect(smuggled.status).toBe(422);
+
+    const listed = await api(session, 'get', '/api/v1/check-templates');
+    expect(listed.body.templates).toHaveLength(0);
+  });
+
+  it('renames a form without touching the version its entries point at', async () => {
+    const session = await adminSession();
+    const { templateId } = await publishedTemplate(session);
+
+    const response = await api(session, 'patch', `/api/v1/check-templates/${templateId}`).send({
+      name: 'Ventilator observations',
+      description: 'Every two hours',
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.template.name).toBe('Ventilator observations');
+    expect(response.body.template.description).toBe('Every two hours');
+    // The name is not versioned, so nothing about the published form moved.
+    expect(response.body.template.publishedVersion.version).toBe(1);
+    expect(response.body.template.publishedVersion.schema.fields).toHaveLength(4);
+    expect(response.body.template.draftVersion).toBeNull();
+  });
+
+  /** The rename must not undo what the import went out of its way to avoid. */
+  it('refuses a rename onto the name of another active form', async () => {
+    const session = await adminSession();
+    await publishedTemplate(session);
+    const other = await api(session, 'post', '/api/v1/check-templates').send({
+      name: 'Bowel chart',
+    });
+
+    const response = await api(
+      session,
+      'patch',
+      `/api/v1/check-templates/${other.body.template.id}`,
+    ).send({ name: 'Vent observations' });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.message).toContain('already called that');
+  });
+
+  it('lets a form keep its own name while its description changes', async () => {
+    const session = await adminSession();
+    const { templateId } = await publishedTemplate(session);
+
+    const response = await api(session, 'patch', `/api/v1/check-templates/${templateId}`).send({
+      name: 'Vent observations',
+      description: 'Reworded',
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.template.description).toBe('Reworded');
+  });
+
+  it('lets an imported form be renamed to the name it wanted', async () => {
+    const session = await adminSession();
+    const { templateId } = await publishedTemplate(session);
+    const exported = await api(session, 'get', '/api/v1/check-templates/export');
+
+    const importResponse = await api(session, 'post', '/api/v1/check-templates/import').send(
+      exported.body,
+    );
+    const copy = importResponse.body.imported[0];
+    expect(copy.name).toBe('Vent observations (imported)');
+
+    // The original has to go first, which is the whole point of the guard.
+    const blocked = await api(session, 'patch', `/api/v1/check-templates/${copy.id}`).send({
+      name: 'Vent observations',
+    });
+    expect(blocked.status).toBe(409);
+
+    await api(session, 'patch', `/api/v1/check-templates/${templateId}`).send({
+      status: 'retired',
+    });
+
+    const renamed = await api(session, 'patch', `/api/v1/check-templates/${copy.id}`).send({
+      name: 'Vent observations',
+    });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.template.name).toBe('Vent observations');
+  });
+
+  it('keeps export and import to the people who manage forms', async () => {
+    const worker = await signIn(h, await seedUser(h.ownerDb, h.keyRing, { role: 'worker' }));
+
+    expect((await api(worker, 'get', '/api/v1/check-templates/export')).status).toBe(403);
+    expect(
+      (
+        await api(worker, 'post', '/api/v1/check-templates/import').send({
+          kind: 'vigilo.check-forms',
+          version: 1,
+          exportedAt: new Date().toISOString(),
+          forms: [{ name: 'Sneaky', description: null, schema: { fields: [] } }],
+        })
+      ).status,
+    ).toBe(403);
+  });
+
   it('audits creation and publication', async () => {
     const session = await adminSession();
     await publishedTemplate(session);

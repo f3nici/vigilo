@@ -466,7 +466,11 @@ Materialised due doses, same pattern as check windows, same coverage rules.
 `id, medication_id, participant_id, due_at, expected, status (pending | given | refused | withheld | not_required | self_administered | missed), revision`.
 
 ### medication_administrations
-`id (device-generated), dose_id NULL (null for PRN), medication_id, participant_id, administered_at, recorded_at, received_at, status, note_enc, recorded_by, witnessed_by NULL, device_id, revision`.
+`id (device-generated), dose_id NULL (null for PRN), medication_id, participant_id, administered_at, recorded_at, received_at, status, amount_given NULL, note_enc, reason_enc NULL, outcome_enc NULL, is_late, recorded_by, witnessed_by NULL, device_id, revision`.
+
+`amount_given` is what actually went in, free text and plaintext exactly like
+`medications.dose` (D92). Null means the record does not say. Nothing converts,
+totals or compares it.
 
 ### incidents
 `id, participant_id, occurred_at, discovered_at, reported_by, summary_enc, detail_enc, immediate_action_enc, injuries_enc, severity (low | moderate | high), family_notified_at NULL, status (open | under_review | closed), closed_by NULL, closed_at NULL, closure_notes_enc NULL, created_at, updated_at, revision`.

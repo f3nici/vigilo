@@ -356,6 +356,8 @@ export const dailyDoseSchema = z.object({
   id: z.string(),
   medicationName: z.string(),
   dose: z.string(),
+  /** What was actually given, when the worker wrote it down. */
+  amountGiven: z.string().nullable(),
   isPrn: z.boolean(),
   /** The scheduled time. Null for a PRN dose, which answered no time. */
   dueAt: z.string().nullable(),

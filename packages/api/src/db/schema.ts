@@ -1316,6 +1316,12 @@ export const medicationAdministrations = pgTable(
     recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
     /** Server time. Authoritative for lateness, because device clocks drift. */
     receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * What was actually given, in the worker's words. Plaintext like
+     * `medications.dose`, which is the same kind of string, and never computed
+     * with (migration 0020).
+     */
+    amountGiven: text('amount_given'),
     noteEnc: encrypted('note_enc'),
     reasonEnc: encrypted('reason_enc'),
     outcomeEnc: encrypted('outcome_enc'),

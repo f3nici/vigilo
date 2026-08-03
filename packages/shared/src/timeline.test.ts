@@ -28,6 +28,7 @@ function window(overrides: Partial<CheckWindow>): CheckWindow {
     requiredFieldCount: 3,
     filledRequiredCount: 0,
     entryId: null,
+    recordedByName: null,
     missReason: null,
     ...overrides,
   };
@@ -120,6 +121,26 @@ describe('groupTimelineByDay', () => {
     expect(groupTimelineByDay(items, 'UTC')).toHaveLength(2);
   });
 
+  /**
+   * The two directions. Today is at the top because that is the shift being
+   * handed over, and the day itself reads forwards because that is how a day
+   * is told.
+   */
+  it('puts the newest day first and reads each day forwards', () => {
+    const items = buildTimeline(
+      [
+        window({ id: 'morning', completedAt: '2026-07-28T00:00:00Z' }),
+        window({ id: 'evening', completedAt: '2026-07-28T10:00:00Z' }),
+        window({ id: 'yesterday', completedAt: '2026-07-27T02:00:00Z' }),
+      ],
+      [diary({ id: 'midday', occurredAt: '2026-07-28T04:00:00Z' })],
+    );
+
+    const days = groupTimelineByDay(items, 'UTC');
+    expect(days.map((day) => day.date)).toEqual(['2026-07-28', '2026-07-27']);
+    expect(days[0]!.items.map((item) => item.id)).toEqual(['morning', 'midday', 'evening']);
+  });
+
   it('keeps the days in the order the items arrived in', () => {
     const items = buildTimeline(
       [
@@ -177,6 +198,17 @@ describe('describeTimelineItem', () => {
     const partial = window({ status: 'partial', filledRequiredCount: 2 });
     expect(describeTimelineItem({ kind: 'check', id: 'w1', at: '', window: partial })).toBe(
       '2 of 3 recorded',
+    );
+  });
+
+  it('names who recorded the check when the window says', () => {
+    const recorded = window({
+      status: 'complete',
+      filledRequiredCount: 3,
+      recordedByName: 'Ann Smith',
+    });
+    expect(describeTimelineItem({ kind: 'check', id: 'w1', at: '', window: recorded })).toBe(
+      '3 of 3 recorded by Ann Smith',
     );
   });
 });

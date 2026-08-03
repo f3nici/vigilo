@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   canManageTemplates,
   createTemplateRequestSchema,
+  importCheckFormsRequestSchema,
   updateTemplateRequestSchema,
   updateVersionRequestSchema,
 } from '@vigilo/shared';
@@ -10,8 +11,10 @@ import type { Database } from '../db/client.js';
 import {
   createDraftVersion,
   createTemplate,
+  exportTemplates,
   getTemplate,
   getVersion,
+  importTemplates,
   listTemplates,
   listVersions,
   previewPublish,
@@ -23,6 +26,22 @@ import { currentPrincipal, requireAuth, requireCapability } from '../middleware/
 import { asyncHandler } from '../middleware/async.js';
 
 const idSchema = z.object({ id: z.string().uuid() });
+
+/** `?ids=a,b,c` for a single form or a chosen few. Absent means all of them. */
+const exportQuerySchema = z.object({
+  ids: z
+    .string()
+    .regex(
+      /^[0-9a-fA-F-]{36}(,[0-9a-fA-F-]{36})*$/,
+      'Ask for check forms by their ids, separated by commas.',
+    )
+    .optional(),
+});
+
+/** A filename somebody can find again in a downloads folder six months later. */
+function exportFilename(now: Date): string {
+  return `vigilo-check-forms-${now.toISOString().slice(0, 10)}.json`;
+}
 
 /**
  * Check templates (doc 04 §5).
@@ -57,6 +76,46 @@ export function templateRoutes(db: Database): Router {
       const request = createTemplateRequestSchema.parse(req.body);
       const template = await createTemplate(db, request, principal.user.id, req.auditActor);
       res.status(201).json({ template });
+    }),
+  );
+
+  /**
+   * The forms as a file (D91).
+   *
+   * Above `/:id` on purpose: Express matches in order, and "export" would
+   * otherwise be read as a template id and rejected as a malformed UUID.
+   *
+   * Managing forms, not reading one, so it needs the same capability as
+   * editing. It is also the one route here that can hand back every field an
+   * organisation collects in a single response, and that belongs to the people
+   * who built them.
+   */
+  router.get(
+    '/export',
+    manageTemplates,
+    asyncHandler(async (req, res) => {
+      const requested = exportQuerySchema.parse(req.query);
+      const document = await exportTemplates(
+        db,
+        requested.ids === undefined ? 'all' : requested.ids.split(','),
+        req.auditActor,
+      );
+
+      res.setHeader('content-type', 'application/json; charset=utf-8');
+      res.setHeader('content-disposition', `attachment; filename="${exportFilename(new Date())}"`);
+      res.send(JSON.stringify(document, null, 2));
+    }),
+  );
+
+  /** Every form in the file arrives as an unpublished draft, or none does. */
+  router.post(
+    '/import',
+    manageTemplates,
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      const request = importCheckFormsRequestSchema.parse(req.body);
+      const imported = await importTemplates(db, request, principal.user.id, req.auditActor);
+      res.status(201).json({ imported });
     }),
   );
 

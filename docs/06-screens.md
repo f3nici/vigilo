@@ -127,14 +127,19 @@ participants, with temporary grants badged and showing time remaining.
 ├──────────────────────────────────────────┤
 │  Timeline   Checks   Diary   Meds   Info │
 ├──────────────────────────────────────────┤
-│ 09:14  Check 08:00-10:00  ✓ complete     │
-│        urine 350ml · BiPAP · repositioned│
-│ 08:40  Diary · Personal care             │
-│        Assisted with shower, good mood…  │
+│ Monday 3 August                          │
 │ 06:00  Check 06:00-08:00  ✗ missed       │
 │        Reason: participant asleep        │
+│ 08:40  Diary · Personal care             │
+│        Assisted with shower, good mood…  │
+│ 09:14  Check 08:00-10:00  ✓ complete     │
+│        3 of 3 recorded by Ann Smith      │
 └──────────────────────────────────────────┘
 ```
+
+The newest day is at the top and each day reads forwards, from the morning
+down (D93). Today is the shift being handed over, and a day is told in the
+order it happened. A recorded check names who filled it in.
 
 Alerts are pinned above everything and always visible on every tab for this
 participant. Emergency is one tap and works offline.

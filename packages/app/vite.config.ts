@@ -3,8 +3,19 @@ import vue from '@vitejs/plugin-vue';
 import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+
+/*
+ * The version the System screen shows, read from this package rather than typed
+ * in a second place. One number, bumped once, and the screen cannot disagree
+ * with the package that built it.
+ */
+const { version } = createRequire(import.meta.url)('./package.json') as { version: string };
 
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(version),
+  },
   plugins: [
     vue(),
     tailwindcss(),

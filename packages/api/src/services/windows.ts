@@ -485,6 +485,8 @@ type WindowRowBundle = {
   templateName: string;
   entryId: string | null;
   entryStatus: 'partial' | 'complete' | null;
+  /** Who filled the check in, so a row can say so without a second request. */
+  recordedByName: string | null;
 };
 
 async function loadWindowRows(db: Database, where: SQL): Promise<WindowRowBundle[]> {
@@ -495,11 +497,15 @@ async function loadWindowRows(db: Database, where: SQL): Promise<WindowRowBundle
       templateName: checkTemplates.name,
       entryId: checkEntries.id,
       entryStatus: checkEntries.status,
+      recordedByName: users.displayName,
     })
     .from(checkWindows)
     .innerJoin(checkSchedules, eq(checkSchedules.id, checkWindows.scheduleId))
     .innerJoin(checkTemplates, eq(checkTemplates.id, checkSchedules.templateId))
     .leftJoin(checkEntries, eq(checkEntries.windowId, checkWindows.id))
+    // Left, twice over: a window may have no entry, and an entry may have been
+    // recorded by an account that has since been removed.
+    .leftJoin(users, eq(users.id, checkEntries.recordedBy))
     .where(where)
     .orderBy(asc(checkWindows.startsAt));
 
@@ -509,6 +515,7 @@ async function loadWindowRows(db: Database, where: SQL): Promise<WindowRowBundle
     templateName: row.templateName,
     entryId: row.entryId,
     entryStatus: row.entryStatus,
+    recordedByName: row.recordedByName,
   }));
 }
 
@@ -644,6 +651,7 @@ async function toCheckWindows(
       requiredFieldCount: counts.required,
       filledRequiredCount: counts.filled,
       entryId: bundle.entryId,
+      recordedByName: bundle.recordedByName,
       missReason: reasons.get(bundle.window.id) ?? null,
     };
   });

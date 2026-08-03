@@ -65,6 +65,7 @@ describe('the local database', () => {
         requiredFieldCount: 2,
         filledRequiredCount: 0,
         entryId: null,
+        recordedByName: null,
         missReason: null,
       },
     };

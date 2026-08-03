@@ -110,6 +110,14 @@ export const checkWindowSchema = z.object({
   requiredFieldCount: z.number(),
   filledRequiredCount: z.number(),
   entryId: z.string().nullable(),
+  /**
+   * Who recorded the entry, when there is one.
+   *
+   * Defaulted rather than required so a window sealed on a device before this
+   * field existed still parses. An old cached row says nothing about who
+   * recorded it, which is exactly what null means here.
+   */
+  recordedByName: z.string().nullable().default(null),
   missReason: missReasonSchema.nullable(),
 });
 

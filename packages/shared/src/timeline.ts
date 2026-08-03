@@ -84,6 +84,15 @@ export type TimelineDay = {
   items: TimelineItem[];
 };
 
+/**
+ * Days newest first, and each day read forwards.
+ *
+ * The two directions are deliberate and they answer two different questions.
+ * Which day am I looking at is answered by today being at the top, so the
+ * screen opens on the shift somebody is handing over. What happened on that day
+ * is answered by reading down the page from the morning, which is how a day is
+ * told and how the self-access "my day" screen already reads it.
+ */
 export function groupTimelineByDay(
   items: readonly TimelineItem[],
   timeZone: string,
@@ -95,6 +104,11 @@ export function groupTimelineByDay(
     if (last && last.date === date) last.items.push(item);
     else days.push({ date, items: [item] });
   }
+
+  // The input arrives newest first, which is what puts the days in order. The
+  // reverse is what turns each day back into a chronology.
+  for (const day of days) day.items.reverse();
+
   return days;
 }
 
@@ -112,7 +126,11 @@ export function describeTimelineItem(item: TimelineItem): string {
     return window.coverageReason ?? 'Not expected';
   }
   if (window.filledRequiredCount === 0) return 'Nothing recorded yet';
-  return `${window.filledRequiredCount} of ${window.requiredFieldCount} recorded`;
+
+  // Who filled it in, on the row itself. A handover reads better for knowing
+  // whether the person who recorded something is still on shift to ask.
+  const counted = `${window.filledRequiredCount} of ${window.requiredFieldCount} recorded`;
+  return window.recordedByName ? `${counted} by ${window.recordedByName}` : counted;
 }
 
 export const timelineSchema = z.object({

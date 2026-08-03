@@ -438,6 +438,118 @@ export const publishPreviewSchema = z.object({
 
 export type PublishPreview = z.infer<typeof publishPreviewSchema>;
 
+/* ------------------------------------------------- export and import (D91) */
+
+/**
+ * Moving a check form between installations, and keeping one in version
+ * control.
+ *
+ * Building a form with twenty fields by hand is an afternoon, and doing it a
+ * second time on a staging box, or after somebody in another house built a
+ * better version of it, is the same afternoon again. The document below is what
+ * travels: the words an admin wrote and the field set they built.
+ *
+ * What it deliberately does not carry is identity. No template id, no version
+ * number, no publication history, no schedule counts. An imported form is a new
+ * form in the receiving installation and it arrives as a draft, because
+ * publishing is irreversible (CLAUDE.md) and nobody should be able to put a
+ * form in front of workers by dropping a file on a screen. It also means an
+ * import can never collide with, supersede or rewrite a published version that
+ * entries are already bound to.
+ */
+export const CHECK_FORM_EXPORT_KIND = 'vigilo.check-forms';
+export const CHECK_FORM_EXPORT_VERSION = 1;
+
+export const checkFormDocumentSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100),
+    description: z.string().trim().max(500).nullable().default(null),
+    schema: templateSchemaSchema,
+  })
+  .strict();
+
+export type CheckFormDocument = z.infer<typeof checkFormDocumentSchema>;
+
+export const checkFormExportSchema = z
+  .object({
+    kind: z.literal(CHECK_FORM_EXPORT_KIND),
+    /**
+     * Refused rather than guessed at if it is not 1. A file written by a later
+     * Vigilo may hold a field type this one cannot render, and importing it
+     * with the unknown parts dropped would produce a form that looks complete
+     * and quietly asks for less than it was built to ask for.
+     */
+    version: z.literal(CHECK_FORM_EXPORT_VERSION),
+    exportedAt: z.string(),
+    forms: z.array(checkFormDocumentSchema).min(1).max(200),
+  })
+  .strict();
+
+export type CheckFormExport = z.infer<typeof checkFormExportSchema>;
+
+export function buildCheckFormExport(
+  forms: readonly CheckFormDocument[],
+  exportedAt: Date,
+): CheckFormExport {
+  return {
+    kind: CHECK_FORM_EXPORT_KIND,
+    version: CHECK_FORM_EXPORT_VERSION,
+    exportedAt: exportedAt.toISOString(),
+    forms: [...forms],
+  };
+}
+
+/**
+ * The import is the export, so a file can go straight back where it came from.
+ */
+export const importCheckFormsRequestSchema = checkFormExportSchema;
+
+export type ImportCheckFormsRequest = z.infer<typeof importCheckFormsRequestSchema>;
+
+/**
+ * A name that is not already taken.
+ *
+ * Two check forms called "Vent observations" is a schedule pointed at the wrong
+ * one, so an import that would collide says so in the name rather than
+ * overwriting the form that is already there. Re-importing the same file
+ * repeatedly is a real thing people do while setting an installation up, and it
+ * has to be harmless.
+ */
+export function uniqueFormName(name: string, taken: ReadonlySet<string>): string {
+  if (!taken.has(name)) return name;
+
+  // The suffix has to fit inside the same limit the name field enforces, so a
+  // long name loses its tail rather than the marking that makes it unique.
+  const fit = (suffix: string): string =>
+    `${name.slice(0, Math.max(1, 100 - suffix.length)).trim()}${suffix}`;
+
+  const base = fit(' (imported)');
+  if (!taken.has(base)) return base;
+
+  for (let attempt = 2; attempt < 1000; attempt += 1) {
+    const candidate = fit(` (imported ${attempt})`);
+    if (!taken.has(candidate)) return candidate;
+  }
+  return fit(` (imported ${Date.now()})`);
+}
+
+/** What an import did, listed back so an admin can see it rather than guess. */
+export const importedFormSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** The name in the file, when it had to be changed to avoid a collision. */
+  originalName: z.string(),
+  fieldCount: z.number(),
+});
+
+export type ImportedForm = z.infer<typeof importedFormSchema>;
+
+export const importCheckFormsResponseSchema = z.object({
+  imported: z.array(importedFormSchema),
+});
+
+export type ImportCheckFormsResponse = z.infer<typeof importCheckFormsResponseSchema>;
+
 /** A label an admin typed, as a starting key. Editable until first publish. */
 export function suggestFieldKey(label: string): string {
   const key = label

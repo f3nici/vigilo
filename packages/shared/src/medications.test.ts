@@ -3,6 +3,7 @@ import {
   administrationProblem,
   countDoses,
   createMedicationRequestSchema,
+  describeAmountGiven,
   describeMedication,
   doseCutoff,
   doseSortRank,
@@ -11,6 +12,7 @@ import {
   nextDoseStatus,
   noteIsRequired,
   recordPrnRequestSchema,
+  signOffRequestSchema,
   signedOffPercent,
   witnessIsRequired,
   type AdministrationStatus,
@@ -128,6 +130,70 @@ describe('sign-off rules', () => {
     expect(
       administrationProblem({ ...base, status: 'refused', note: 'Asleep', witnessedBy: 'nurse-2' }),
     ).toBeNull();
+  });
+
+  it('takes an amount on a dose that reached the person', () => {
+    expect(
+      administrationProblem({ ...base, status: 'given', amountGiven: 'half a tablet' }),
+    ).toBeNull();
+    expect(
+      administrationProblem({ ...base, status: 'self_administered', amountGiven: '7.5 mL' }),
+    ).toBeNull();
+  });
+
+  it('refuses an amount on a sign-off that says nothing was given', () => {
+    expect(
+      administrationProblem({
+        ...base,
+        status: 'refused',
+        note: 'Spat it out',
+        amountGiven: '5 mg',
+      }),
+    ).toBe('Nothing was given, so there is no amount to record.');
+    expect(administrationProblem({ ...base, status: 'given', amountGiven: '   ' })).toBeNull();
+  });
+});
+
+describe('the amount actually given', () => {
+  it('reads as the charted dose when nothing else was said', () => {
+    expect(describeAmountGiven('500 mg', null)).toBe('500 mg');
+    expect(describeAmountGiven('500 mg', '  ')).toBe('500 mg');
+  });
+
+  /** Repeating it would read "500 mg, gave 500 mg", which says nothing twice. */
+  it('says nothing extra when the amount matches the chart', () => {
+    expect(describeAmountGiven('500 mg', '500 mg')).toBe('500 mg');
+  });
+
+  it('shows what was given when it differs from the chart', () => {
+    expect(describeAmountGiven('1 to 2 tablets', '1 tablet')).toBe('1 to 2 tablets, gave 1 tablet');
+  });
+});
+
+describe('the sign-off wire shapes', () => {
+  const now = '2026-03-02T08:05:00.000Z';
+
+  it('defaults the amount to nothing, so an old client still parses', () => {
+    const parsed = signOffRequestSchema.parse({
+      id: '018f8f8f-8f8f-7f8f-8f8f-8f8f8f8f8f8f',
+      status: 'given',
+      administeredAt: now,
+      recordedAt: now,
+    });
+    expect(parsed.amountGiven).toBeNull();
+  });
+
+  it('trims the amount rather than storing the spaces somebody typed', () => {
+    const parsed = recordPrnRequestSchema.parse({
+      id: '018f8f8f-8f8f-7f8f-8f8f-8f8f8f8f8f8f',
+      medicationId: '018f8f8f-8f8f-7f8f-8f8f-8f8f8f8f8f90',
+      status: 'given',
+      administeredAt: now,
+      recordedAt: now,
+      amountGiven: '  2 tablets ',
+      reason: 'Headache',
+    });
+    expect(parsed.amountGiven).toBe('2 tablets');
   });
 });
 

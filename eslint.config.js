@@ -103,6 +103,12 @@ export default tseslint.config(
 
   {
     files: ['packages/app/src/**/*.{ts,vue}'],
+    languageOptions: {
+      globals: {
+        // Replaced at build time by Vite, declared in src/env.d.ts.
+        __APP_VERSION__: 'readonly',
+      },
+    },
     rules: {
       'no-restricted-imports': ['error', { patterns: restrictedPlatformImports }],
       'no-restricted-syntax': ['error', ...restrictedPlatformSyntax],

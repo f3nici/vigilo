@@ -52,6 +52,19 @@ function local() {
   return offline.state === 'ready' ? offline.localStore : null;
 }
 
+/**
+ * Who is recording, for the local copy of a record.
+ *
+ * The server sets `recorded_by` from the session, not from anything the device
+ * sends, so this is only ever the label on the row this device is holding until
+ * the outbox drains. It matters because "recorded by" reading "someone" for
+ * twenty minutes after you typed it looks like the record went astray.
+ */
+function recorder(): { id: string | null; name: string | null } {
+  const principal = useSessionStore().principal;
+  return { id: principal?.userId ?? null, name: principal?.displayName ?? null };
+}
+
 /* ------------------------------------------------------------------ reading */
 
 export async function readToday(): Promise<{
@@ -112,6 +125,8 @@ export async function readWindow(windowId: string): Promise<WindowDetail | null>
 
   return {
     ...window,
+    // A window cached before this field existed does not know who recorded it.
+    recordedByName: window.recordedByName ?? null,
     templateSchema: version?.schema ?? { fields: [] },
     entryStatus: (entry?.status as 'partial' | 'complete' | undefined) ?? null,
     entry: entry ?? null,
@@ -188,8 +203,8 @@ export async function recordEntry(input: {
       windowId: input.window.id,
       participantId: input.window.participantId,
       templateVersionId: input.window.templateVersionId,
-      recordedBy: null,
-      recordedByName: null,
+      recordedBy: recorder().id,
+      recordedByName: recorder().name,
       recordedAt: request.recordedAt,
       receivedAt: request.recordedAt,
       status: complete ? 'complete' : 'partial',
@@ -213,6 +228,9 @@ export async function recordEntry(input: {
     detail: {
       ...input.window,
       status,
+      // You just recorded it, so the screen can say so without waiting for the
+      // outbox to drain and the next pull to bring the name back.
+      recordedByName: recorder().name,
       entryId: input.entryId,
       entryStatus: complete ? 'complete' : 'partial',
       filledRequiredCount: filled,
@@ -461,14 +479,15 @@ export async function signOffDose(input: {
       administeredAt: input.request.administeredAt,
       recordedAt: input.request.recordedAt,
       receivedAt: input.request.recordedAt,
+      amountGiven: input.request.amountGiven,
       note: input.request.note,
       reason: null,
       outcome: null,
       // Lateness comes from the server clock, always. Claiming it here would
       // be the device deciding something it is not allowed to decide.
       isLate: input.dose.isLate,
-      recordedBy: null,
-      recordedByName: null,
+      recordedBy: recorder().id,
+      recordedByName: recorder().name,
       witnessedBy: input.request.witnessedBy,
       witnessedByName: null,
     },
@@ -520,12 +539,13 @@ export async function recordPrn(input: {
       administeredAt: input.request.administeredAt,
       recordedAt: input.request.recordedAt,
       receivedAt: input.request.recordedAt,
+      amountGiven: input.request.amountGiven,
       note: input.request.note,
       reason: input.request.reason,
       outcome: input.request.outcome,
       isLate: false,
-      recordedBy: null,
-      recordedByName: null,
+      recordedBy: recorder().id,
+      recordedByName: recorder().name,
       witnessedBy: input.request.witnessedBy,
       witnessedByName: null,
     },
