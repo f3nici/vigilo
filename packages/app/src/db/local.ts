@@ -1002,6 +1002,8 @@ function entityIdOf(operation: OutboxOperation): string {
       return operation.payload.id;
     case 'medication.prn':
       return operation.payload.id;
+    case 'check.unscheduled':
+      return operation.payload.entryId;
     case 'care_plan.read':
       return operation.carePlanId;
     case 'attachment.create':

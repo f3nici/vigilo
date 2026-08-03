@@ -48,7 +48,6 @@ import {
   updateIncident,
 } from '../services/incidents.js';
 import { renderIncident } from '../services/pdf.js';
-import { notifyCarePlanPublished } from '../services/notifications.js';
 import { findParticipant, toSummary } from '../services/participants.js';
 import { assertInScope } from '../services/scope.js';
 import { getOrgSettings } from '../services/org.js';
@@ -58,7 +57,6 @@ import { HttpError } from '../middleware/errors.js';
 import { asyncHandler } from '../middleware/async.js';
 import { incidentActions } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
-import type { VapidKeys } from '../services/push.js';
 
 /**
  * Care plans and incidents (doc 04 §10).
@@ -246,11 +244,7 @@ export function carePlanRoutes(db: Database, keyRing: KeyRing): Router {
 }
 
 /** A version addressed by its own id: edit a draft, publish it, discard it. */
-export function carePlanVersionRoutes(
-  db: Database,
-  keyRing: KeyRing,
-  vapid: VapidKeys | null,
-): Router {
+export function carePlanVersionRoutes(db: Database, keyRing: KeyRing): Router {
   const router = Router();
 
   router.use(requireAuth());
@@ -275,9 +269,13 @@ export function carePlanVersionRoutes(
   );
 
   /**
-   * Publishing notifies every assigned worker and sets the unread marker
-   * (doc 01 §7.1, §9). The notification carries the participant's initial and
-   * surname and a link, never what changed.
+   * Publishing sets the unread marker on every assigned worker (doc 01 §7.1).
+   *
+   * It used to send a push as well. Notifications came out in this phase
+   * (D88): with no roster there was no way to tell a worker on shift from one
+   * asleep, so everyone assigned was told at any hour. The unread marker does
+   * the same job without waking anybody, and it is what a worker actually sees
+   * when they next open the record.
    */
   router.post(
     '/:id/publish',
@@ -286,7 +284,7 @@ export function carePlanVersionRoutes(
       const id = await scopedVersion(req);
       const request = publishCarePlanVersionRequestSchema.parse(req.body);
 
-      const { plan, participantId, carePlanId } = await publishVersion(
+      const { plan } = await publishVersion(
         db,
         keyRing,
         id,
@@ -295,13 +293,7 @@ export function carePlanVersionRoutes(
         req.auditActor,
       );
 
-      const notified = await notifyCarePlanPublished(db, keyRing, vapid, {
-        participantId,
-        carePlanId,
-        versionId: id,
-      });
-
-      res.json({ carePlan: plan, notified });
+      res.json({ carePlan: plan });
     }),
   );
 

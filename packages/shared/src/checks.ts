@@ -210,6 +210,44 @@ export const putEntryRequestSchema = z
 
 export type PutEntryRequest = z.infer<typeof putEntryRequestSchema>;
 
+/**
+ * Recording a check nobody scheduled (D89).
+ *
+ * A worker opens a participant, picks a published form and records it there and
+ * then: a blood pressure somebody asked about, an observation that is not on
+ * anybody's grid. It carries a template id rather than a version id, because
+ * the worker is choosing a form and the server decides which version is current
+ * at the moment they save.
+ *
+ * No window, so no lateness and no place in the compliance percentage. Nothing
+ * asked for it, so nothing can say it was late or that it was missed.
+ */
+export const recordUnscheduledCheckRequestSchema = z
+  .object({
+    /** Device-generated UUID v7, so a replay updates rather than duplicates. */
+    entryId: z.string().uuid(),
+    templateId: z.string().uuid(),
+    recordedAt: isoDateTimeSchema,
+    values: z.array(checkValueSchema).max(200),
+  })
+  .strict();
+
+export type RecordUnscheduledCheckRequest = z.infer<typeof recordUnscheduledCheckRequestSchema>;
+
+/**
+ * How far ahead a recorded time may sit before it is a mistake rather than a
+ * clock.
+ *
+ * Device clocks drift by seconds and a worker may be a minute ahead of the
+ * server. An hour ahead is somebody typing tomorrow's date, and a check
+ * recorded in the future would sit at the top of a day that has not happened.
+ */
+export const FUTURE_RECORD_TOLERANCE_MINUTES = 5;
+
+export function recordedInTheFuture(recordedAt: Date, now: Date): boolean {
+  return recordedAt.getTime() > now.getTime() + FUTURE_RECORD_TOLERANCE_MINUTES * 60_000;
+}
+
 /** An edit after submission. Every change writes a revision row (doc 01 §5.5). */
 export const editEntryRequestSchema = z
   .object({
@@ -235,7 +273,12 @@ export type CheckValueView = z.infer<typeof checkValueViewSchema>;
 
 export const checkEntrySchema = z.object({
   id: z.string(),
-  windowId: z.string(),
+  /**
+   * Null when the check was recorded on demand rather than because a schedule
+   * asked for one (D89). No window means no deadline, so no lateness and no
+   * place in the compliance percentage.
+   */
+  windowId: z.string().nullable(),
   participantId: z.string(),
   templateVersionId: z.string(),
   recordedBy: z.string().nullable(),

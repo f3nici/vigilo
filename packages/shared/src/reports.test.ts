@@ -112,6 +112,7 @@ describe('compliance counting', () => {
       missedWithReason: 2,
       missedWithoutReason: 1,
       notExpected: 1,
+      unscheduled: 0,
     });
     expect(completionPercent(counts)).toBe(69);
   });
@@ -211,5 +212,46 @@ describe('csv fields', () => {
 
   it('ends a row the way a spreadsheet expects', () => {
     expect(csvRow(['a', 'b'])).toBe('a,b\r\n');
+  });
+});
+
+describe('checks nobody scheduled', () => {
+  /**
+   * D89. The percentage is the one number somebody will be asked to defend, so
+   * an unscheduled check has to stay outside it in both directions.
+   */
+  it('is counted, and changes neither the denominator nor the percentage', () => {
+    const windows: ComplianceWindow[] = [
+      window({ status: 'complete' }),
+      window({ status: 'complete' }),
+      window({ status: 'missed', hasMissReason: false }),
+    ];
+
+    const without = countCompliance(windows);
+    const with5 = countCompliance(windows, 5);
+
+    expect(with5.unscheduled).toBe(5);
+    expect(with5.expected).toBe(without.expected);
+    expect(with5.completed).toBe(without.completed);
+    expect(completionPercent(with5)).toBe(completionPercent(without));
+  });
+
+  it('cannot push the figure above 100 percent', () => {
+    // Counting these as completed would do exactly that, which is why they are
+    // a separate number rather than part of the numerator.
+    const counts = countCompliance([window({ status: 'complete' })], 20);
+    expect(completionPercent(counts)).toBe(100);
+  });
+
+  it('cannot hide a missed scheduled check behind an unscheduled one', () => {
+    const counts = countCompliance([window({ status: 'missed', hasMissReason: false })], 3);
+    expect(counts.missedWithoutReason).toBe(1);
+    expect(completionPercent(counts)).toBe(0);
+  });
+
+  it('shows on its own for a participant with nothing scheduled at all', () => {
+    const counts = countCompliance([], 2);
+    expect(counts.unscheduled).toBe(2);
+    expect(counts.expected).toBe(0);
   });
 });

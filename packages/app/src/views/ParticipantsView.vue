@@ -4,14 +4,17 @@ import { RouterLink, useRouter } from 'vue-router';
 import {
   canManageParticipants,
   compareParticipants,
+  describeOutstanding,
+  emptyOutstanding,
   matchesParticipantSearch,
   ndisNumberSchema,
   participantDisplayName,
+  summariseOutstanding,
   type ParticipantSummary,
 } from '@vigilo/shared';
 import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
-import { readParticipants } from '@/lib/records';
+import { readParticipants, readToday } from '@/lib/records';
 import { ApiRequestError } from '@/api/client';
 import { useSessionStore } from '@/stores/session';
 import { timeRemaining } from '@/lib/format';
@@ -37,6 +40,28 @@ const lookingUp = ref(false);
 const lookupResult = ref('');
 
 const isAdmin = computed(() => canManageParticipants(session.principal?.role ?? 'worker'));
+
+/**
+ * What each person still needs (D90).
+ *
+ * This list is the worker's home now, so it has to answer the question Today
+ * used to: which of these people needs me. Read from the same feed Today does,
+ * so the two never disagree.
+ *
+ * Its absence is not an error. The list has to render with no signal and
+ * before the windows arrive, and a participant with no counts simply shows a
+ * name, which is what the screen was before.
+ */
+const outstanding = ref(new Map<string, ReturnType<typeof emptyOutstanding>>());
+
+async function loadOutstanding(): Promise<void> {
+  try {
+    const today = await readToday();
+    outstanding.value = summariseOutstanding(today.windows);
+  } catch {
+    // No signal and nothing local yet. The names still matter.
+  }
+}
 
 const visible = computed(() =>
   participants.value
@@ -67,7 +92,10 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load);
+onMounted(() => {
+  void load();
+  void loadOutstanding();
+});
 
 /**
  * Exact match on the NDIS number, which is the one thing the server can look up
@@ -181,6 +209,13 @@ async function lookup(): Promise<void> {
 
             <div class="ml-auto flex flex-wrap items-center gap-2 text-sm">
               <span
+                v-if="outstanding.get(participant.id)?.needsReason"
+                class="rounded-full border px-2 py-0.5"
+                :style="{ borderColor: 'var(--vigilo-missed)', color: 'var(--vigilo-missed)' }"
+              >
+                Needs a reason
+              </span>
+              <span
                 v-if="participant.status === 'archived'"
                 class="rounded-full border px-2 py-0.5"
                 :style="{
@@ -199,6 +234,17 @@ async function lookup(): Promise<void> {
               </span>
             </div>
           </div>
+
+          <!--
+            Colour is never the only signal, so the counts are spelled out as
+            words underneath rather than left to the pill above.
+          -->
+          <p
+            v-if="describeOutstanding(outstanding.get(participant.id) ?? emptyOutstanding())"
+            class="text-text-secondary mt-1 text-sm"
+          >
+            {{ describeOutstanding(outstanding.get(participant.id) ?? emptyOutstanding()) }}
+          </p>
         </RouterLink>
       </li>
     </ul>

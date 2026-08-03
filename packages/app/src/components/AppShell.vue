@@ -44,10 +44,14 @@ const nav = computed(() => {
     ];
   }
 
-  const items = [
-    { name: 'today', label: 'Today' },
-    { name: 'participants', label: 'Participants' },
-  ];
+  /*
+   * Participants first, and Today only for the roles that still have it (D90).
+   * A worker reaches every window through the person it is about.
+   */
+  const items = [{ name: 'participants', label: 'Participants' }];
+  if (['admin', 'team_leader', 'nurse'].includes(session.principal?.role ?? 'worker')) {
+    items.unshift({ name: 'today', label: 'Today' });
+  }
   if (canManageTemplates(session.principal?.role ?? 'worker')) {
     items.push({ name: 'check-templates', label: 'Check forms' });
   }
@@ -106,7 +110,7 @@ async function signOut(): Promise<void> {
 
     <header class="border-border-default bg-surface border-b">
       <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
-        <RouterLink :to="{ name: 'today' }" class="text-primary flex items-center gap-2">
+        <RouterLink :to="{ name: 'home' }" class="text-primary flex items-center gap-2">
           <VigiloMark />
           <span class="text-text text-xl font-semibold tracking-tight">Vigilo</span>
         </RouterLink>

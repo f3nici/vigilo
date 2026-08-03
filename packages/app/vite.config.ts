@@ -58,7 +58,10 @@ export default defineConfig({
          * redirects is a wasted second and a visible flash. Today is where a
          * worker is going.
          */
-        start_url: '/today',
+        // The root, not /today: it redirects to whichever home the signed-in
+        // role belongs on (D90), so a worker's installed app opens on their
+        // participants rather than on a screen they cannot reach.
+        start_url: '/',
         scope: '/',
         display: 'standalone',
         orientation: 'portrait',

@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import {
   addDays,
   countCompliance,
@@ -18,6 +18,7 @@ import {
   type ComplianceRow,
   type ComplianceWindow,
   type DailyDay,
+  type DailyUnscheduledCheck,
   type DailyReport,
   type DailyWindow,
   type Scope,
@@ -31,6 +32,7 @@ import type { KeyRing } from '../crypto/keys.js';
 import {
   checkEntries,
   checkEntryValues,
+  checkTemplates,
   checkTemplateVersions,
   checkWindows,
   missedReasonCodes,
@@ -124,6 +126,40 @@ async function complianceRows(
   }));
 }
 
+/**
+ * Checks recorded on demand in the window (D89), bucketed the same way the
+ * scheduled ones are.
+ *
+ * A separate query because these have no `check_windows` row to join through.
+ * Counted and reported beside the percentage, never inside it: nothing asked
+ * for them, so they cannot be a check done on time.
+ */
+async function unscheduledRows(
+  db: Database,
+  scope: string[] | 'all',
+  from: Date,
+  to: Date,
+): Promise<{ participantId: string; recordedAt: Date; recordedBy: string | null }[]> {
+  const filters = [
+    isNull(checkEntries.windowId),
+    gte(checkEntries.recordedAt, from),
+    lt(checkEntries.recordedAt, to),
+  ];
+  if (scope !== 'all') {
+    if (scope.length === 0) return [];
+    filters.push(inArray(checkEntries.participantId, scope));
+  }
+
+  return db
+    .select({
+      participantId: checkEntries.participantId,
+      recordedAt: checkEntries.recordedAt,
+      recordedBy: checkEntries.recordedBy,
+    })
+    .from(checkEntries)
+    .where(and(...filters));
+}
+
 export async function complianceReport(
   db: Database,
   keyRing: KeyRing,
@@ -156,6 +192,28 @@ export async function complianceReport(
   const filtered =
     query.userId === undefined ? rows : rows.filter((row) => row.recordedBy === query.userId);
 
+  const unscheduledAll = await unscheduledRows(
+    db,
+    scope,
+    zonedTimeToUtc(query.from, 0, org.timezone),
+    zonedTimeToUtc(addDays(query.to, 1), 0, org.timezone),
+  );
+  const unscheduled =
+    query.userId === undefined
+      ? unscheduledAll
+      : unscheduledAll.filter((row) => row.recordedBy === query.userId);
+
+  const unscheduledByKey = new Map<string, number>();
+  for (const row of unscheduled) {
+    const key =
+      grouping === 'participant'
+        ? row.participantId
+        : grouping === 'worker'
+          ? (row.recordedBy ?? 'nobody')
+          : localDateOf(row.recordedAt, org.timezone);
+    unscheduledByKey.set(key, (unscheduledByKey.get(key) ?? 0) + 1);
+  }
+
   const buckets = new Map<string, typeof filtered>();
   for (const row of filtered) {
     const key =
@@ -170,11 +228,20 @@ export async function complianceReport(
     buckets.set(key, bucket);
   }
 
-  const labels = await labelsFor(db, keyRing, grouping, [...buckets.keys()]);
+  const labels = await labelsFor(db, keyRing, grouping, [
+    ...new Set([...buckets.keys(), ...unscheduledByKey.keys()]),
+  ]);
 
-  const reportRows: ComplianceRow[] = [...buckets.entries()]
-    .map(([key, windows]) => {
-      const counts = countCompliance(windows);
+  /*
+   * A bucket can hold unscheduled checks and no windows at all: a participant
+   * with nothing scheduled who was still observed twice. Keyed off both maps so
+   * that row appears rather than vanishing.
+   */
+  const keys = new Set([...buckets.keys(), ...unscheduledByKey.keys()]);
+
+  const reportRows: ComplianceRow[] = [...keys]
+    .map((key) => {
+      const counts = countCompliance(buckets.get(key) ?? [], unscheduledByKey.get(key) ?? 0);
       return {
         key,
         label: labels.get(key) ?? key,
@@ -184,7 +251,7 @@ export async function complianceReport(
     })
     .sort((a, b) => a.label.localeCompare(b.label));
 
-  const total = countCompliance(filtered);
+  const total = countCompliance(filtered, unscheduled.length);
 
   return {
     from: query.from,
@@ -401,6 +468,61 @@ function emptyDoseCounts() {
  * The same data whether it is rendered on screen or into a PDF, so the report
  * an auditor is handed says exactly what the admin saw before they printed it.
  */
+
+/**
+ * Checks recorded on demand for one participant over a range (D89).
+ *
+ * Reuses `entryDetails`, so an unscheduled check renders its values through
+ * exactly the same formatter a scheduled one does. A report where the same
+ * reading reads differently depending on whether anybody scheduled it would be
+ * a report nobody could compare.
+ */
+export async function unscheduledEntries(
+  db: Database,
+  keyRing: KeyRing,
+  participantId: string,
+  from: Date,
+  to: Date,
+): Promise<DailyUnscheduledCheck[]> {
+  const rows = await db
+    .select({ id: checkEntries.id, templateId: checkTemplates.name })
+    .from(checkEntries)
+    .innerJoin(checkTemplateVersions, eq(checkTemplateVersions.id, checkEntries.templateVersionId))
+    .innerJoin(checkTemplates, eq(checkTemplates.id, checkTemplateVersions.templateId))
+    .where(
+      and(
+        eq(checkEntries.participantId, participantId),
+        isNull(checkEntries.windowId),
+        gte(checkEntries.recordedAt, from),
+        lt(checkEntries.recordedAt, to),
+      ),
+    )
+    .orderBy(asc(checkEntries.recordedAt));
+
+  if (rows.length === 0) return [];
+
+  const detail = await entryDetails(
+    db,
+    keyRing,
+    rows.map((row) => row.id),
+  );
+
+  return rows.flatMap((row) => {
+    const found = detail.get(row.id);
+    if (!found) return [];
+    return [
+      {
+        id: row.id,
+        recordedAt: found.recordedAt,
+        templateName: row.templateId,
+        recordedByName: found.recordedByName,
+        editCount: found.editCount,
+        values: found.values,
+      },
+    ];
+  });
+}
+
 export async function dailyReport(
   db: Database,
   keyRing: KeyRing,
@@ -453,6 +575,19 @@ export async function dailyReport(
     windows.map((window) => window.id),
   );
 
+  /*
+   * Checks recorded on demand over the same range (D89). Fetched separately
+   * because they have no window to come back through `listWindows`, and folded
+   * into each day's list so the report stays one timeline of what happened.
+   */
+  const unscheduled = await unscheduledEntries(
+    db,
+    keyRing,
+    query.participantId,
+    zonedTimeToUtc(query.from, 0, org.timezone),
+    zonedTimeToUtc(addDays(query.to, 1), 0, org.timezone),
+  );
+
   const medications = await dailyDoses(
     db,
     keyRing,
@@ -470,6 +605,10 @@ export async function dailyReport(
   for (let date = query.from; date <= query.to; date = addDays(date, 1)) {
     const dayWindows = windows.filter(
       (window) => localDateOf(new Date(window.startsAt), org.timezone) === date,
+    );
+
+    const dayUnscheduled = unscheduled.filter(
+      (one: DailyUnscheduledCheck) => localDateOf(new Date(one.recordedAt), org.timezone) === date,
     );
 
     days.push({
@@ -498,6 +637,7 @@ export async function dailyReport(
                 },
         };
       }),
+      unscheduled: dayUnscheduled,
       diary: diary
         .filter((entry) => localDateOf(new Date(entry.occurredAt), org.timezone) === date)
         .map((entry) => ({
@@ -522,6 +662,7 @@ export async function dailyReport(
         isLate: window.isLate,
         hasMissReason: window.missReason !== null,
       })),
+      day.unscheduled.length,
     );
     // PRN doses answered no schedule, so they are shown but never counted:
     // folding them in would put a number in the denominator that nothing was
@@ -554,6 +695,7 @@ export async function dailyReport(
         isLate: window.isLate,
         hasMissReason: window.missReason !== null,
       })),
+      unscheduled.length,
     ),
     doseTotal: countDoses(medications.filter((one) => !one.isPrn)),
   };

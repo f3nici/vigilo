@@ -14,10 +14,33 @@ describe('where a participant lands', () => {
     expect(homeFor('participant')).toBe('my-day');
   });
 
-  it('leaves every staff role on Today', () => {
-    for (const role of ['admin', 'team_leader', 'nurse', 'worker', undefined]) {
+  it('sends a worker to their participants rather than to Today', () => {
+    /*
+     * D90. A worker opens Vigilo to work with a person. Today asked them to
+     * think about windows across a caseload first, and it is not a screen they
+     * can reach any more.
+     */
+    expect(homeFor('worker')).toBe('participants');
+  });
+
+  it('leaves the across-everyone view to the roles that ask that question', () => {
+    for (const role of ['admin', 'team_leader', 'nurse']) {
       expect(homeFor(role)).toBe('today');
     }
+  });
+
+  it('falls back to Today for an unknown role rather than nowhere', () => {
+    // The guard has already refused an unauthenticated request by this point,
+    // so this is a shape nobody should reach, not a role anybody holds.
+    expect(homeFor(undefined)).toBe('today');
+  });
+});
+
+describe('who may reach Today', () => {
+  it('is closed to a worker', () => {
+    // Not merely hidden from the nav: typing the URL has to refuse too.
+    const today = router.getRoutes().find((route) => route.name === 'today');
+    expect(today?.meta.roles).toEqual(['admin', 'team_leader', 'nurse']);
   });
 });
 

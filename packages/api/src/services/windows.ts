@@ -99,6 +99,7 @@ export async function toCheckEntry(
 
   return {
     id: row.id,
+    /** Null on a check somebody recorded on demand (D89). */
     windowId: row.windowId,
     participantId: row.participantId,
     templateVersionId: row.templateVersionId,

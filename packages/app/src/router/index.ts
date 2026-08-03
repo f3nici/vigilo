@@ -44,14 +44,30 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/components/AppShell.vue'),
     children: [
       {
+        /*
+         * The home a role lands on, rather than a screen of its own (D90).
+         *
+         * A worker gets the participant list: they open the app to work with a
+         * person, and Today asked them to think about windows across a caseload
+         * first. Team leaders, nurses and admins keep Today, because spotting
+         * that a house recorded nothing all afternoon is exactly their job.
+         */
         path: '',
+        name: 'home',
+        redirect: () => ({ name: homeFor(useSessionStore().principal?.role) }),
+      },
+      {
+        path: 'today',
         name: 'today',
-        // The manifest's start_url is /today, so an installed app opens
-        // straight onto the screen a worker is going to rather than through a
-        // redirect the user watches happen.
-        alias: 'today',
         component: () => import('@/views/TodayView.vue'),
-        meta: { requiresAuth: true, title: 'Today' },
+        // Not a worker's screen any more (D90). They see the same windows on
+        // the participant they are working with, where the windows are about
+        // somebody rather than about a caseload.
+        meta: {
+          requiresAuth: true,
+          roles: ['admin', 'team_leader', 'nurse'],
+          title: 'Today',
+        },
       },
       {
         path: 'participants',
@@ -70,6 +86,12 @@ const routes: RouteRecordRaw[] = [
         name: 'participant',
         component: () => import('@/views/ParticipantView.vue'),
         meta: { requiresAuth: true, title: 'Participant' },
+      },
+      {
+        path: 'participants/:id/record-check',
+        name: 'record-check',
+        component: () => import('@/views/RecordCheckView.vue'),
+        meta: { requiresAuth: true, title: 'Record a check' },
       },
       {
         path: 'participants/:id/edit',
@@ -189,8 +211,18 @@ export const router = createRouter({
  * worker's list of checks to do, would be sending them to a screen that has
  * nothing on it and could not have anything on it.
  */
-export function homeFor(role: string | undefined): 'today' | 'my-day' {
-  return role === 'participant' ? 'my-day' : 'today';
+/**
+ * Where a role lands after signing in (D90).
+ *
+ * A worker opens Vigilo to work with a person, so they get the participant
+ * list and reach everything through whoever they are with. Today is an
+ * across-everyone view, which is a team leader's question rather than a
+ * worker's, and it stays for the roles that ask it.
+ */
+export function homeFor(role: string | undefined): 'today' | 'my-day' | 'participants' {
+  if (role === 'participant') return 'my-day';
+  if (role === 'worker') return 'participants';
+  return 'today';
 }
 
 /**

@@ -4,6 +4,7 @@ import {
   canManageReasonCodes,
   canManageSchedules,
   canRecordChecks,
+  recordUnscheduledCheckRequestSchema,
   createCoverageExceptionRequestSchema,
   createMissedReasonCodeRequestSchema,
   createScheduleRequestSchema,
@@ -56,9 +57,11 @@ import {
   listRevisions,
   putEntry,
   putMissReason,
+  recordUnscheduledCheck,
 } from '../services/entries.js';
 import { createReasonCode, listReasonCodes, updateReasonCode } from '../services/reasonCodes.js';
 import { findParticipant } from '../services/participants.js';
+import { listRecordableForms } from '../services/templates.js';
 import { assertInScope } from '../services/scope.js';
 import { getOrgSettings } from '../services/org.js';
 import { currentPrincipal, requireAuth, requireCapability } from '../middleware/principal.js';
@@ -247,6 +250,44 @@ export function participantCheckRoutes(db: Database, keyRing: KeyRing): Router {
     }),
   );
 
+  /**
+   * A check nobody scheduled (D89).
+   *
+   * The published forms available to record right now, and the write itself.
+   * Anyone who can record a check can do this: it is the same act as filling in
+   * a window, minus the window.
+   */
+  router.get(
+    '/:id/recordable-forms',
+    asyncHandler(async (req, res) => {
+      const id = scoped(req);
+      await findParticipant(db, id);
+      res.json({ forms: await listRecordableForms(db) });
+    }),
+  );
+
+  router.post(
+    '/:id/checks',
+    requireCapability(canRecordChecks, 'A self-access account cannot record checks.'),
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      const id = scoped(req);
+      await findParticipant(db, id);
+      const request = recordUnscheduledCheckRequestSchema.parse(req.body);
+
+      const entry = await recordUnscheduledCheck(
+        db,
+        keyRing,
+        id,
+        request,
+        { userId: principal.user.id, role: principal.role, deviceId: null },
+        req.auditActor,
+      );
+
+      res.status(201).json({ entry });
+    }),
+  );
+
   return router;
 }
 
@@ -412,7 +453,11 @@ export function checkEntryRoutes(db: Database, keyRing: KeyRing): Router {
         req.auditActor,
       );
 
-      res.json({ entry, window: await getWindowDetail(db, keyRing, window.id) });
+      res.json({
+        entry,
+        // Null on an unscheduled check: there is no window to send back (D89).
+        window: window === null ? null : await getWindowDetail(db, keyRing, window.id),
+      });
     }),
   );
 

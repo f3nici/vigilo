@@ -11,6 +11,7 @@ import {
   type ParticipantDetail,
 } from '@vigilo/shared';
 import FormError from '@/components/FormError.vue';
+import ParticipantActions from '@/components/ParticipantActions.vue';
 import ParticipantAlerts from '@/components/ParticipantAlerts.vue';
 import EmergencyContacts from '@/components/EmergencyContacts.vue';
 import EmergencyPlanPanel from '@/components/EmergencyPlanPanel.vue';
@@ -59,7 +60,15 @@ const tabs = [
   { key: 'info', label: 'Info' },
 ] as const;
 
-const tab = ref<(typeof tabs)[number]['key']>('timeline');
+/*
+ * The tab can be named in the query, so the buttons above can deep-link into
+ * the diary or the medication chart rather than dropping somebody on the
+ * timeline to find it themselves.
+ */
+const tab = ref<(typeof tabs)[number]['key']>(
+  (tabs.find((one) => one.key === route.query.tab)?.key ??
+    'timeline') as (typeof tabs)[number]['key'],
+);
 
 const role = computed(() => session.principal?.role ?? 'worker');
 const canManage = computed(() => canManageParticipants(role.value));
@@ -203,6 +212,12 @@ async function restore(): Promise<void> {
         :can-edit="canEditAlerts(role)"
         @changed="load"
       />
+
+      <!--
+        What to do now, above the record (D90). The worker home is the
+        participant list, so this is where a shift starts.
+      -->
+      <ParticipantActions :participant-id="participant.id" />
 
       <!-- Doc 06 §4.2. Alerts are above this and stay on every tab. -->
       <nav

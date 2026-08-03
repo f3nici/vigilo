@@ -128,28 +128,6 @@ const envSchema = z
      */
     ATTACHMENT_DIR: z.string().min(1).default('/data/attachments'),
 
-    /**
-     * VAPID keys for Web Push (doc 04 §14).
-     *
-     * Optional on purpose. Without them the API still runs and the app still
-     * works; it just never asks for notification permission and the push job
-     * does nothing. A self-hosted deployment that has not generated keys yet
-     * should not be a deployment that will not start.
-     *
-     * `npm run -w @vigilo/api admin -- push:generate-keys` prints a pair.
-     */
-    VAPID_PUBLIC_KEY: optional(z.string().min(1)),
-    VAPID_PRIVATE_KEY: optional(z.string().min(1)),
-    /**
-     * The `mailto:` or `https:` the push service contacts about a misbehaving
-     * sender. Required by the VAPID spec. Vigilo sends no email itself, and
-     * this is not an exception to that: it is a contact address in a header.
-     */
-    VAPID_SUBJECT: z.preprocess(
-      (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
-      z.string().min(1).default('mailto:admin@example.com'),
-    ),
-
     /** Run pending migrations on boot. Off in tests, which manage their own. */
     MIGRATE_ON_START: z
       .enum(['true', 'false'])

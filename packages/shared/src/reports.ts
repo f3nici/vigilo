@@ -47,6 +47,16 @@ export const complianceCountsSchema = z.object({
   missedWithoutReason: z.number(),
   /** Shown separately, never folded into the percentage (doc 01 §5.6). */
   notExpected: z.number(),
+  /**
+   * Checks recorded on demand, with no window behind them (D89).
+   *
+   * Outside the percentage in both directions. Nothing asked for these, so
+   * they cannot be a check done on time; and counting them as completed would
+   * either push the figure above 100% or hide a missed scheduled check behind
+   * an unscheduled one. They are counted so the extra work is visible, which
+   * is the honest thing to do with it.
+   */
+  unscheduled: z.number(),
 });
 
 export type ComplianceCounts = z.infer<typeof complianceCountsSchema>;
@@ -62,11 +72,22 @@ export function emptyCounts(): ComplianceCounts {
     missedWithReason: 0,
     missedWithoutReason: 0,
     notExpected: 0,
+    unscheduled: 0,
   };
 }
 
-export function countCompliance(windows: readonly ComplianceWindow[]): ComplianceCounts {
+/**
+ * `unscheduled` is a separate argument rather than a status on the window list,
+ * because an unscheduled check has no window at all. Passing one in would mean
+ * inventing a window shape for something that never had one, and the first
+ * person to add a status to that shape would put it in the denominator.
+ */
+export function countCompliance(
+  windows: readonly ComplianceWindow[],
+  unscheduled = 0,
+): ComplianceCounts {
   const counts = emptyCounts();
+  counts.unscheduled = unscheduled;
 
   for (const window of windows) {
     if (!countsTowardCompliance(window.status)) {
@@ -354,9 +375,35 @@ export const dailyDoseSchema = z.object({
 
 export type DailyDose = z.infer<typeof dailyDoseSchema>;
 
+/**
+ * A check somebody recorded on demand (D89).
+ *
+ * Its own shape and its own list, rather than a window with the window parts
+ * left null. Medications put a PRN dose in the same array as a scheduled one
+ * and filter it out of the counting, which works there because `isPrn` is a
+ * flag on the row. Here the counting is `countCompliance` over `day.windows`,
+ * the one number somebody will be asked to defend, and the safest way to keep
+ * an unscheduled check out of it is for it never to be in the array at all.
+ *
+ * No status, no lateness and no coverage: nothing asked for this, so there is
+ * nothing for it to have been on time for.
+ */
+export const dailyUnscheduledCheckSchema = z.object({
+  id: z.string(),
+  recordedAt: z.string(),
+  templateName: z.string(),
+  recordedByName: z.string().nullable(),
+  editCount: z.number(),
+  values: z.array(dailyEntryValueSchema),
+});
+
+export type DailyUnscheduledCheck = z.infer<typeof dailyUnscheduledCheckSchema>;
+
 export const dailyDaySchema = z.object({
   date: z.string(),
   windows: z.array(dailyWindowSchema),
+  /** Recorded on demand, never counted in `counts` (D89). */
+  unscheduled: z.array(dailyUnscheduledCheckSchema),
   diary: z.array(dailyDiaryEntrySchema),
   medications: z.array(dailyDoseSchema),
   counts: complianceCountsSchema,

@@ -52,7 +52,7 @@ import { toCode } from './reasonCodes.js';
 import { toDiaryCategory, diaryEntriesByIds, createDiaryEntry, updateDiaryEntry } from './diary.js';
 import { createAttachment, toAttachment } from './attachments.js';
 import { missReasonsByWindowIds, toCheckEntry, windowsByIds } from './windows.js';
-import { putEntry, putMissReason } from './entries.js';
+import { putEntry, recordUnscheduledCheck, putMissReason } from './entries.js';
 import { medicationsByIds } from './medications.js';
 import { carePlansByIds, markRead } from './careplans.js';
 import { administrationsByIds, dosesByIds, recordPrn, signOffDose } from './doses.js';
@@ -871,6 +871,20 @@ async function dispatch(
         db,
         keyRing,
         windowId,
+        operation.payload,
+        { userId: principal.userId, role: principal.role, deviceId: principal.deviceId },
+        actor,
+        { recordedOffline: true },
+      );
+      return { entityId: entry.id, revision: await revisionOf(db, checkEntries, entry.id) };
+    }
+
+    case 'check.unscheduled': {
+      assertPushScope(scope, operation.participantId);
+      const entry = await recordUnscheduledCheck(
+        db,
+        keyRing,
+        operation.participantId,
         operation.payload,
         { userId: principal.userId, role: principal.role, deviceId: principal.deviceId },
         actor,

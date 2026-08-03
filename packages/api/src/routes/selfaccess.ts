@@ -44,10 +44,12 @@ export function selfAccessRoutes(db: Database, keyRing: KeyRing): Router {
   /*
    * Both guards go on each route rather than on the router.
    *
-   * Several routers share the `/me` mount, and a router-level `use` runs for
-   * every path that reaches this one, not only the three it declares. Refusing
-   * there would refuse a worker's notification preferences on the way past,
-   * which is exactly what it did until the suite showed it.
+   * A router-level `use` runs for every path that reaches this router, not only
+   * the three it declares. When notification preferences also lived under
+   * `/me`, guarding here refused a worker's preferences on the way past, and
+   * the suite caught it. This router has `/me` to itself now, so the bug cannot
+   * happen today, and the guards stay per-route so that adding anything back
+   * under `/me` does not quietly reintroduce it.
    */
   const selfOnly = [
     requireAuth(),

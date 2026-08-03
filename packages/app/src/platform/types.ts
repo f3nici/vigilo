@@ -148,39 +148,14 @@ export interface SecureStore {
   unseal(sealed: string): Promise<string>;
 }
 
-export type PushPermission = 'granted' | 'denied' | 'prompt' | 'unsupported';
-
-/** What the API stores so it can reach this device. */
-export type PushSubscriptionKeys = {
-  endpoint: string;
-  p256dh: string;
-  auth: string;
-  expirationTime: number | null;
-};
-
-/**
- * Push notifications: overdue warnings, close notifications, escalations.
- * Nothing sensitive goes in a payload. An initial and surname is the ceiling.
+/*
+ * There is no push adapter. Notifications came out in this phase (D88), and
+ * with no roster there was no honest way to decide who was on shift. The
+ * service worker keeps its `push` and `notificationclick` listeners, so
+ * bringing them back is server-side work plus one adapter, not a rewrite.
  */
-export interface Push {
-  isSupported(): boolean;
-
-  permission(): PushPermission;
-
-  requestPermission(): Promise<PushPermission>;
-
-  /**
-   * Subscribes with the deployment's public key. Null when there is nothing to
-   * do: no support, no permission, or no key configured on the server.
-   */
-  subscribe(applicationServerKey: string): Promise<PushSubscriptionKeys | null>;
-
-  unsubscribe(): Promise<void>;
-}
-
 export interface PlatformAdapters {
   readonly name: 'web' | 'native';
   readonly storage: Storage;
   readonly secureStore: SecureStore;
-  readonly push: Push;
 }

@@ -7,7 +7,6 @@ import { KeyRing } from './crypto/keys.js';
 import { startJobs } from './jobs/index.js';
 import { createFileStore } from './services/storage.js';
 import { applyConfiguredTimeZone } from './services/org.js';
-import { vapidKeys } from './services/vapid.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -37,7 +36,7 @@ async function main(): Promise<void> {
   logger.info(zone, zone.changed ? 'org timezone set from ORG_TIMEZONE' : 'org timezone unchanged');
 
   const app = createApp(config, logger, db, keyRing);
-  const jobs = startJobs(db, logger, keyRing, vapidKeys(config), store);
+  const jobs = startJobs(db, logger, keyRing, store);
 
   const server = app.listen(config.PORT, () => {
     logger.info({ port: config.PORT, build: config.BUILD_HASH }, 'vigilo api listening');

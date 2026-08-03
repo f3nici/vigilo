@@ -4,6 +4,7 @@ import {
   missReasonSchema,
   missedReasonCodeSchema,
   putEntryRequestSchema,
+  recordUnscheduledCheckRequestSchema,
   putMissReasonRequestSchema,
 } from './checks.js';
 import { checkTemplateSchema, templateVersionSchema } from './templates.js';
@@ -287,6 +288,7 @@ export function needsBootstrap(cursor: number, serverRevision: number): boolean 
  */
 export const outboxOperationKinds = [
   'check_entry.put',
+  'check.unscheduled',
   'miss_reason.put',
   'medication.sign_off',
   'medication.prn',
@@ -312,6 +314,20 @@ export const outboxOperationSchema = z.discriminatedUnion('kind', [
      */
     windowId: z.string().uuid().nullable(),
     payload: putEntryRequestSchema,
+  }),
+  /*
+   * A check nobody scheduled (D89). No window id, and none is bound on arrival
+   * either: this one never had a window and the server must not invent one for
+   * it, or a check somebody chose to take would land in a slot the schedule
+   * asked for and be counted as answering it.
+   *
+   * The same shape as `medication.prn`, which is the same idea one table over.
+   */
+  z.object({
+    opId: z.string().uuid(),
+    kind: z.literal('check.unscheduled'),
+    participantId: z.string().uuid(),
+    payload: recordUnscheduledCheckRequestSchema,
   }),
   z.object({
     opId: z.string().uuid(),

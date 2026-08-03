@@ -62,28 +62,32 @@ describe('optional settings', () => {
 
   it('treats a blank optional setting as absent', () => {
     /*
-     * `docker compose` turns `${VAPID_PUBLIC_KEY:-}` into an empty string, not
-     * into nothing. Leaving the keys blank the way .env.example documents used
-     * to stop the API starting at all.
+     * `docker compose` turns `${MIGRATE_DATABASE_URL:-}` into an empty string,
+     * not into nothing. Leaving an optional setting blank the way .env.example
+     * documents used to stop the API starting at all.
      */
     const config = loadConfig({
       ...required,
-      VAPID_PUBLIC_KEY: '',
-      VAPID_PRIVATE_KEY: '',
-      VAPID_SUBJECT: '',
       MIGRATE_DATABASE_URL: '',
       APP_DB_PASSWORD: '',
     });
 
-    expect(config.VAPID_PUBLIC_KEY).toBeUndefined();
-    expect(config.VAPID_PRIVATE_KEY).toBeUndefined();
-    expect(config.VAPID_SUBJECT).toBe('mailto:admin@example.com');
     // The migrate URL falls back to the serving one, as it does when unset.
     expect(config.migrateDatabaseUrl).toBe(required.DATABASE_URL);
+    expect(config.APP_DB_PASSWORD).toBeUndefined();
   });
 
   it('still takes a real value', () => {
-    const config = loadConfig({ ...required, VAPID_PUBLIC_KEY: 'a-public-key' });
-    expect(config.VAPID_PUBLIC_KEY).toBe('a-public-key');
+    const config = loadConfig({ ...required, APP_DB_PASSWORD: 'a-password' });
+    expect(config.APP_DB_PASSWORD).toBe('a-password');
+  });
+
+  it('defaults the org timezone to Perth', () => {
+    expect(loadConfig(required).ORG_TIMEZONE).toBe('Australia/Perth');
+  });
+
+  it('refuses a timezone that is not a real IANA name', () => {
+    // A typo here would silently decide what day every record belongs to.
+    expect(() => loadConfig({ ...required, ORG_TIMEZONE: 'Australia/Fremantle' })).toThrow();
   });
 });

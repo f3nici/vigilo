@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import sharp from 'sharp';
 import { sql } from 'drizzle-orm';
+import { localDateOf } from '@vigilo/shared';
 import {
   assign,
   createHarness,
@@ -12,6 +13,7 @@ import {
   seedParticipant,
   seedUser,
   signIn,
+  TEST_TIME_ZONE,
   VENT_SCHEMA,
   type Harness,
   type SignedIn,
@@ -228,7 +230,18 @@ describe('diary', () => {
       const refused = await api(self, 'get', `/api/v1/participants/${participantId}/diary`);
       expect(refused.status).toBe(403);
 
-      const selfView = await api(self, 'get', '/api/v1/me/day');
+      /*
+       * Asked for the day the entry actually falls on rather than letting
+       * `/me/day` default to today.
+       *
+       * `newEntry` puts `occurredAt` 90 minutes ago, so a suite running in the
+       * first 90 minutes after midnight in the org timezone files it under
+       * yesterday and the default day is empty. That is the product behaving
+       * correctly and the test asking the wrong question, and it only showed up
+       * when CI happened to run at 00:36 Melbourne time.
+       */
+      const day = localDateOf(new Date(Date.now() - 90 * 60_000), TEST_TIME_ZONE);
+      const selfView = await api(self, 'get', `/api/v1/me/day?date=${day}`);
       expect(selfView.status).toBe(200);
       expect(selfView.body.day.diary).toHaveLength(1);
       expect(selfView.body.day.diary[0].body).toBe('Visible one.');

@@ -156,3 +156,74 @@ export function describeWindowStatus(status: WindowStatus): string {
       return 'Not expected';
   }
 }
+
+/**
+ * What is outstanding on each participant, for the list a worker lands on
+ * (D90).
+ *
+ * The worker home is the participant list now, so the list has to answer the
+ * question Today used to: which of these people needs me. Without it a missed
+ * check is invisible until somebody happens to open the right record, and a
+ * missed check that nobody notices is the failure the whole product exists to
+ * prevent.
+ *
+ * Three numbers, in the order they matter. `needsReason` first because it is
+ * the one somebody owes an answer to; a window that closed unrecorded is
+ * already a fact, and the reason is the part still missing.
+ */
+export type Outstanding = {
+  /** Closed unrecorded, with nobody having said why. */
+  needsReason: number;
+  /** Open right now and not yet complete. */
+  openNow: number;
+  /** Missed, already explained. Counted so the row does not look clean. */
+  missedExplained: number;
+};
+
+export function emptyOutstanding(): Outstanding {
+  return { needsReason: 0, openNow: 0, missedExplained: 0 };
+}
+
+export function hasOutstanding(one: Outstanding): boolean {
+  return one.needsReason > 0 || one.openNow > 0 || one.missedExplained > 0;
+}
+
+export function summariseOutstanding(
+  windows: readonly CheckWindow[],
+  now = new Date(),
+): Map<string, Outstanding> {
+  const byParticipant = new Map<string, Outstanding>();
+
+  for (const window of windows) {
+    const current = byParticipant.get(window.participantId) ?? emptyOutstanding();
+
+    if (needsMissReason(window.status, window.missReason !== null)) {
+      current.needsReason += 1;
+    } else if (window.status === 'missed') {
+      current.missedExplained += 1;
+    } else if (
+      (window.status === 'pending' || window.status === 'partial') &&
+      new Date(window.startsAt) <= now &&
+      new Date(window.endsAt) > now
+    ) {
+      current.openNow += 1;
+    }
+
+    byParticipant.set(window.participantId, current);
+  }
+
+  return byParticipant;
+}
+
+/** The line a participant row shows, or null when there is nothing to say. */
+export function describeOutstanding(one: Outstanding): string | null {
+  const parts: string[] = [];
+  if (one.needsReason > 0) {
+    parts.push(
+      `${one.needsReason} ${one.needsReason === 1 ? 'check needs' : 'checks need'} a reason`,
+    );
+  }
+  if (one.openNow > 0) parts.push(`${one.openNow} due now`);
+  if (one.missedExplained > 0) parts.push(`${one.missedExplained} missed`);
+  return parts.length === 0 ? null : parts.join(' · ');
+}

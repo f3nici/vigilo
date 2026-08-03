@@ -4,7 +4,7 @@ Care records platform for a disability support team. Participant diaries and
 admin-defined observation checks, working offline. Ships as an installable PWA
 first, with native Android and iOS builds as the final phases.
 
-**Status: Phases 0 to 9 done.** Phase 5 was the v1 line and everything since is
+**Status: Phases 0 to 9 done, plus a round of pre-hardening fixes.** Phase 5 was the v1 line and everything since is
 additive. Monorepo, Docker Compose and CI; identity, roles, TOTP, the
 break-glass CLI, the scope resolver, the audit log and the encryption layer;
 participant records with alerts, emergency contacts, emergency plans and
@@ -49,6 +49,17 @@ wins.
 - **Nothing is hard-deleted** while retention applies. Soft delete or archive.
 - **The audit log is append-only** and hash-chained. The app database role has no
   UPDATE or DELETE on it. Views are logged, not only writes.
+- **A check entry may have no window** (D89). `check_entries.window_id` is
+  nullable for a check somebody recorded on demand, the same shape PRN
+  medication uses. No window means no lateness and no status, and it is
+  **outside the compliance percentage in both directions**, counted beside it.
+  It has its own array on the daily report so it can never reach
+  `countCompliance`.
+- **There are no notifications** (D88). The job, the routes, the VAPID config,
+  the web-push dependency and the app's push adapter are gone, because with no
+  roster there was no way to tell a worker on shift from one asleep. The
+  service worker's `push` and `notificationclick` handlers stay on purpose, and
+  so do the three tables. Do not add a sender without a roster to aim it with.
 - **Doses are generated server-side only, like windows,** and never for a time
   that has already passed (D59). A missed dose says a person did not get their
   medication, so one invented for a time before the chart existed blames staff

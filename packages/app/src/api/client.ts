@@ -99,7 +99,10 @@ import {
   type PreviewScheduleRequest,
   type PublishPreview,
   type PutCoveragePatternRequest,
+  checkEntrySchema,
+  type CheckEntry,
   type PutEntryRequest,
+  type RecordUnscheduledCheckRequest,
   type PutMissReasonRequest,
   type PutSegmentsRequest,
   type RecalculateCoverageRequest,
@@ -127,19 +130,15 @@ import {
   type UpdateParticipantRequest,
   type UserSummary,
   deviceSchema,
-  notificationPreferencesSchema,
   syncBootstrapResponseSchema,
   syncChangesResponseSchema,
   syncPushResponseSchema,
   type Device,
-  type NotificationPreferences,
   type OutboxOperation,
-  type PushSubscriptionRequest,
   type RegisterDeviceRequest,
   type SyncBootstrapResponse,
   type SyncChangesResponse,
   type SyncPushResponse,
-  type UpdateNotificationPreferences,
   complianceReportSchema,
   dailyReportSchema,
   exportJobSchema,
@@ -700,6 +699,30 @@ export async function getWindow(id: string): Promise<WindowDetail> {
   return windowDetailWrapperSchema.parse(await request(`/v1/windows/${id}`)).window;
 }
 
+/** Forms a worker can record on demand, and the write itself (D89). */
+export async function listRecordableForms(
+  participantId: string,
+): Promise<{ id: string; name: string; description: string | null }[]> {
+  return z
+    .object({
+      forms: z.array(
+        z.object({ id: z.string(), name: z.string(), description: z.string().nullable() }),
+      ),
+    })
+    .parse(await request(`/v1/participants/${participantId}/recordable-forms`)).forms;
+}
+
+export async function recordUnscheduledCheck(
+  participantId: string,
+  input: RecordUnscheduledCheckRequest,
+): Promise<CheckEntry> {
+  return z
+    .object({ entry: checkEntrySchema })
+    .parse(
+      await request(`/v1/participants/${participantId}/checks`, { method: 'POST', body: input }),
+    ).entry;
+}
+
 export async function putEntry(windowId: string, input: PutEntryRequest): Promise<WindowDetail> {
   return z
     .object({ entry: z.unknown(), window: windowDetailSchema })
@@ -921,38 +944,6 @@ export async function syncPush(operations: OutboxOperation[]): Promise<SyncPushR
       body: { operations, sentAt: new Date().toISOString() },
     }),
   );
-}
-
-/* ------------------------------------------------------------------ push */
-
-export async function getVapidKey(): Promise<{ configured: boolean; publicKey: string | null }> {
-  return z
-    .object({ configured: z.boolean(), publicKey: z.string().nullable() })
-    .parse(await request('/v1/push/vapid-key'));
-}
-
-export async function savePushSubscription(body: PushSubscriptionRequest): Promise<string> {
-  return z
-    .object({ id: z.string() })
-    .parse(await request('/v1/push/subscriptions', { method: 'POST', body })).id;
-}
-
-export async function deletePushSubscription(id: string): Promise<void> {
-  await request(`/v1/push/subscriptions/${id}`, { method: 'DELETE' });
-}
-
-export async function getNotificationPreferences(): Promise<NotificationPreferences> {
-  return z
-    .object({ preferences: notificationPreferencesSchema })
-    .parse(await request('/v1/me/notification-preferences')).preferences;
-}
-
-export async function updateNotificationPreferences(
-  body: UpdateNotificationPreferences,
-): Promise<NotificationPreferences> {
-  return z
-    .object({ preferences: notificationPreferencesSchema })
-    .parse(await request('/v1/me/notification-preferences', { method: 'PUT', body })).preferences;
 }
 
 /**
