@@ -5,8 +5,6 @@ Vigilo is source-available under the [PolyForm Noncommercial License
 permission from Fenici**, and there is no way to acquire it by accident: if
 nobody at Fenici has written to you granting a licence, you do not have one.
 
-Contact: <admin@fenici.com.au>
-
 ---
 
 ## What you may do without asking
@@ -46,8 +44,6 @@ If it makes money, supports making money, or happens inside a for-profit
 entity, assume it needs a licence and ask.
 
 ## Asking
-
-Email <admin@fenici.com.au> with:
 
 1. Who you are, and the legal entity that would hold the licence.
 2. What you want to do with Vigilo, and roughly at what scale (how many
