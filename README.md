@@ -27,6 +27,7 @@ judgement.** Vigilo records values; it never scores, flags or ranges them.
 - [Troubleshooting](#troubleshooting)
 - [Developing](#developing)
 - [Documents](#documents)
+- [Licence](#licence)
 
 ---
 
@@ -432,3 +433,23 @@ self-access.
 data is entered.** See [the roadmap](docs/09-roadmap.md).
 
 Not a public product. It is built for one organisation and self-hosted by them.
+
+---
+
+## Licence
+
+Copyright (c) 2026 Fenici. Vigilo is **source-available, not open source**,
+under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+
+Noncommercial use is free. Read it, run it, change it, self-host it for
+yourself, and use it in a charity, school, public health or government
+organisation, whatever its funding. Pass on the licence with any copy you
+distribute.
+
+**Any commercial use needs written permission from Fenici first**, including
+running it inside a for-profit business purely for your own staff, hosting it
+for other people, or charging for work built on it. It is granted case by case,
+to a named entity, in writing, and nothing else grants it.
+
+Ask at <admin@fenici.com.au>. [COMMERCIAL-LICENCE.md](COMMERCIAL-LICENCE.md)
+sets out what counts as commercial and what to put in the email.

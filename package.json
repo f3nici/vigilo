@@ -3,7 +3,7 @@
   "version": "0.3.0",
   "private": true,
   "description": "Care records platform for a disability support team",
-  "license": "UNLICENSED",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "type": "module",
   "engines": {
     "node": ">=22"

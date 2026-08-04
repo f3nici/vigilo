@@ -25,6 +25,11 @@ FROM node:22-alpine AS runtime
 WORKDIR /repo
 ENV NODE_ENV=production
 
+# Source-available, not open source. Commercial use needs written permission.
+LABEL org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0" \
+  org.opencontainers.image.vendor="Fenici" \
+  org.opencontainers.image.source="https://github.com/f3nici/vigilo"
+
 RUN apk add --no-cache tini
 
 COPY --from=build /repo/node_modules node_modules
