@@ -107,6 +107,11 @@ wins.
   credentials directly.
 - **Nothing sensitive in push payloads.** An initial and surname is the ceiling.
 - Australian English in all user-facing strings.
+- **Source-available, not open source** (D98). PolyForm Noncommercial 1.0.0,
+  copyright Fenici. Noncommercial use is free; commercial use needs written
+  permission, granted case by case to a named entity. Do not relicense, do not
+  add an SPDX header claiming anything else, and do not add a dependency whose
+  licence would conflict with distributing this under those terms.
 
 ## Workflow
 

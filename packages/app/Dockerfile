@@ -18,6 +18,11 @@ RUN npm run build --workspace @vigilo/shared \
 
 FROM nginx:1.27-alpine AS runtime
 
+# Source-available, not open source. Commercial use needs written permission.
+LABEL org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0" \
+  org.opencontainers.image.vendor="Fenici" \
+  org.opencontainers.image.source="https://github.com/f3nici/vigilo"
+
 COPY --from=build /repo/packages/app/dist /usr/share/nginx/html
 COPY packages/app/nginx.conf /etc/nginx/conf.d/default.conf
 
