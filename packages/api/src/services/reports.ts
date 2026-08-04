@@ -18,6 +18,7 @@ import {
   type ComplianceRow,
   type ComplianceWindow,
   type DailyDay,
+  type DailyEntryNote,
   type DailyUnscheduledCheck,
   type DailyReport,
   type DailyWindow,
@@ -31,6 +32,7 @@ import type { Database } from '../db/client.js';
 import type { KeyRing } from '../crypto/keys.js';
 import {
   checkEntries,
+  checkEntryNotes,
   checkEntryValues,
   checkTemplates,
   checkTemplateVersions,
@@ -41,13 +43,13 @@ import {
   users,
   windowMissReasons,
 } from '../db/schema.js';
-import { decryptOptional } from '../crypto/fields.js';
+import { decryptField, decryptOptional } from '../crypto/fields.js';
 import { HttpError } from '../middleware/errors.js';
 import { getOrgSettings } from './org.js';
 import { findParticipant, toSummary } from './participants.js';
 import { toAlert } from './alerts.js';
 import { listDiaryEntries } from './diary.js';
-import { listWindows, MISS_NOTE_COLUMN, VALUE_TEXT_COLUMN } from './windows.js';
+import { listWindows, ENTRY_NOTE_COLUMN, MISS_NOTE_COLUMN, VALUE_TEXT_COLUMN } from './windows.js';
 import { administrationsFor, listDoses } from './doses.js';
 import { parseSchema } from './templates.js';
 import type { DiaryPrincipal } from './diary.js';
@@ -518,6 +520,7 @@ export async function unscheduledEntries(
         recordedByName: found.recordedByName,
         editCount: found.editCount,
         values: found.values,
+        notes: found.notes,
       },
     ];
   });
@@ -628,6 +631,7 @@ export async function dailyReport(
           recordedAt: detail?.recordedAt ?? null,
           editCount: detail?.editCount ?? 0,
           values: detail?.values ?? [],
+          notes: detail?.notes ?? [],
           missReason:
             window.missReason === null
               ? null
@@ -786,7 +790,38 @@ export type EntryDetail = {
   recordedAt: string;
   editCount: number;
   values: { fieldKey: string; label: string; display: string }[];
+  /** Notes added after the check was recorded, oldest first (D96). */
+  notes: DailyEntryNote[];
 };
+
+/** The notes on a set of entries, grouped by entry and in writing order. */
+async function notesFor(
+  db: Database,
+  keyRing: KeyRing,
+  entryIds: readonly string[],
+): Promise<Map<string, DailyEntryNote[]>> {
+  const grouped = new Map<string, DailyEntryNote[]>();
+  if (entryIds.length === 0) return grouped;
+
+  const rows = await db
+    .select({ note: checkEntryNotes, createdByName: users.displayName })
+    .from(checkEntryNotes)
+    .leftJoin(users, eq(users.id, checkEntryNotes.createdBy))
+    .where(inArray(checkEntryNotes.entryId, [...entryIds]))
+    .orderBy(asc(checkEntryNotes.createdAt));
+
+  for (const { note, createdByName } of rows) {
+    const bucket = grouped.get(note.entryId) ?? [];
+    bucket.push({
+      body: decryptField(keyRing, ENTRY_NOTE_COLUMN, note.bodyEnc),
+      createdByName,
+      createdAt: note.createdAt.toISOString(),
+    });
+    grouped.set(note.entryId, bucket);
+  }
+
+  return grouped;
+}
 
 /**
  * Exported because the self-access day renders the same readings from the same
@@ -811,6 +846,8 @@ export async function entryDetails(
     .select()
     .from(checkEntryValues)
     .where(inArray(checkEntryValues.entryId, [...entryIds]));
+
+  const notes = await notesFor(db, keyRing, entryIds);
 
   const versionIds = [...new Set(rows.map((row) => row.entry.templateVersionId))];
   const versions =
@@ -861,6 +898,7 @@ export async function entryDetails(
           recordedAt: row.entry.recordedAt.toISOString(),
           editCount: row.entry.editCount,
           values: rendered,
+          notes: notes.get(row.entry.id) ?? [],
         },
       ] as const;
     }),

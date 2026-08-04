@@ -61,6 +61,16 @@ wins.
   turned off. This is **not a permission**: it decides what the on-demand
   picker offers and nothing else, so never reach for it to answer "may this
   person see that".
+- **A note on a recorded check sits beside it, never in it** (D96).
+  `check_entry_notes` is append-only, enforced by a grant, and encrypted.
+  Adding one writes no revision and does not touch `edit_count`, because a note
+  explains a record and does not alter one. An admin writes, every staff role
+  reads, and it never reaches a participant's own record.
+- **Ending a schedule removes every window still open, the one in progress
+  included** (D97). That is `removeOpenWindows`, deliberately not
+  `regenerateFutureWindows`, which preserves the open window because a segment
+  change should not interrupt a worker mid-check. A window holding an entry is
+  kept either way: deleting it would cascade the values away.
 - **The diary is the day book, not a notes app** (D95). An entry may be dated
   up to 730 days ahead, because writing down what somebody has coming up is
   what it is for; notes on how something went live in the team's separate

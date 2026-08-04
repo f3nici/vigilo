@@ -184,10 +184,15 @@ Rules:
 - Required fields marked, but partial entry is allowed and expected. The screen
   says how many required fields remain rather than blocking.
 - No colour-coding or warning on any value. Vigilo does not judge readings.
-- Number fields open a numeric keypad with the unit visible next to the input.
+- Number fields open a numeric keypad with the unit visible next to the input,
+  and hold the decimal point while it is being typed: a field configured for
+  one decimal place has to be able to record 36.4.
 - After the window closes the same screen still opens, with a clear "this window
   closed at 10:00, your entry will be recorded as late" banner.
 - Editing an existing entry shows who recorded it and when, and any edit history.
+- Under the record, the notes an admin has added to it, each with who wrote it
+  and when, and the box to add one for an admin (D96). They read as notes about
+  the record, never as values on it, and nothing there is coloured.
 
 ### 4.4 Missed reason
 

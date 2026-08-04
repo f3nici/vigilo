@@ -113,6 +113,16 @@ describe('field validation', () => {
     ).toContain('whole number');
   });
 
+  it('counts one decimal place in the singular', () => {
+    const onePlace = { ...field('urine_output'), decimals: 1 } as TemplateField;
+    expect(
+      validateFieldValue(onePlace, value({ fieldKey: 'urine_output', number: 350.55 })),
+    ).toContain('at most 1 decimal place.');
+    expect(
+      validateFieldValue(onePlace, value({ fieldKey: 'urine_output', number: 350.5 })),
+    ).toBeNull();
+  });
+
   it('rejects a choice that is not on the list', () => {
     expect(
       validateFieldValue(field('vent_mode'), value({ fieldKey: 'vent_mode', json: 'cpap' })),

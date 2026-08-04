@@ -70,9 +70,9 @@ export function validateFieldValue(field: TemplateField, value: CheckValue): str
     case 'number': {
       if (typeof value.number !== 'number') return `${field.label} takes a number.`;
       if (decimalPlaces(value.number) > field.decimals) {
-        return field.decimals === 0
-          ? `${field.label} takes a whole number.`
-          : `${field.label} takes at most ${field.decimals} decimal places.`;
+        if (field.decimals === 0) return `${field.label} takes a whole number.`;
+        const places = field.decimals === 1 ? 'decimal place' : 'decimal places';
+        return `${field.label} takes at most ${field.decimals} ${places}.`;
       }
       const unit = field.unit === null ? '' : ` ${field.unit}`;
       if (field.min !== undefined && value.number < field.min) {
@@ -306,6 +306,34 @@ export const entryRevisionSchema = z.object({
 });
 
 export type EntryRevision = z.infer<typeof entryRevisionSchema>;
+
+/**
+ * A note added to a recorded check after the fact (D96).
+ *
+ * Not a value and not a correction. The reading stays exactly as the worker
+ * recorded it, and this sits beside it saying what somebody reading the record
+ * later needs to know: why the reading looks the way it does, what else was
+ * going on, what was done about it.
+ *
+ * Free text about a person, so it is encrypted at rest, and append-only, so a
+ * note can never be quietly reworded once somebody has acted on it.
+ */
+export const entryNoteSchema = z.object({
+  id: z.string(),
+  entryId: z.string(),
+  body: z.string(),
+  createdBy: z.string().nullable(),
+  createdByName: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export type EntryNote = z.infer<typeof entryNoteSchema>;
+
+export const addEntryNoteRequestSchema = z
+  .object({ body: z.string().trim().min(1).max(2000) })
+  .strict();
+
+export type AddEntryNoteRequest = z.infer<typeof addEntryNoteRequestSchema>;
 
 /**
  * Missed reason codes (doc 03 §6). Admin-configurable, because "forgot" and

@@ -13,6 +13,7 @@ import {
   outstandingActions,
   utcToZoned,
   type DailyDose,
+  type DailyEntryNote,
   type DailyReport,
   type DailyUnscheduledCheck,
   type DailyWindow,
@@ -242,6 +243,8 @@ function unscheduledBlock(
     }
   }
 
+  entryNotes(doc, check.notes, time);
+
   const notes = [
     check.recordedByName ? `Recorded by ${check.recordedByName}` : null,
     check.editCount > 0
@@ -255,6 +258,29 @@ function unscheduledBlock(
   }
 
   doc.moveDown(0.5);
+}
+
+/**
+ * Notes an admin added afterwards (D96).
+ *
+ * Under the readings and marked as a note, never mixed in with them: the
+ * readings are what the worker recorded and this is what somebody said about
+ * them later. Each one carries who wrote it and when, because that is what
+ * makes it worth reading months on.
+ */
+function entryNotes(
+  doc: PDFKit.PDFDocument,
+  notes: DailyEntryNote[],
+  time: (iso: string) => string,
+): void {
+  if (notes.length === 0) return;
+
+  for (const note of notes) {
+    doc.font(BODY).fontSize(9).fillColor(INK);
+    doc.text(`Note: ${note.body}`, { indent: 12 });
+    doc.font(LABEL).fontSize(8).fillColor(MUTED);
+    doc.text([note.createdByName ?? 'someone', time(note.createdAt)].join(' · '), { indent: 12 });
+  }
 }
 
 function windowBlock(
@@ -273,6 +299,8 @@ function windowBlock(
       doc.text(`${value.label}: ${value.display}`, { indent: 12 });
     }
   }
+
+  entryNotes(doc, window.notes, time);
 
   if (window.missReason !== null) {
     doc.font(BODY).fontSize(10).fillColor(INK);

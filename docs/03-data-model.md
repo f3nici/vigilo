@@ -373,6 +373,14 @@ Append-only edit history.
 `id, entry_id, field_key, old_value_json, new_value_json, changed_by, changed_at, reason NULL`.
 Never updated, never deleted.
 
+### check_entry_notes
+Notes added to a recorded check after the fact (D96).
+`id, entry_id, body_enc, created_by, created_at`.
+Append-only, enforced by the grant: the app role has no UPDATE or DELETE on it.
+A note explains an entry, so adding one writes no revision and does not touch
+`edit_count`. Admin writes, every staff role reads, and it never reaches a
+participant's own record.
+
 ### missed_reason_codes
 Admin-configurable.
 `id, code, label, requires_note, active, sort_order, revision`.

@@ -1,6 +1,8 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import {
+  addEntryNoteRequestSchema,
+  canAnnotateEntries,
   canManageReasonCodes,
   canManageSchedules,
   canRecordChecks,
@@ -50,11 +52,14 @@ import {
   listWindows,
   materialiseParticipant,
   regenerateFutureWindows,
+  removeOpenWindows,
   HORIZON_DAYS,
 } from '../services/windows.js';
 import {
+  addEntryNote,
   editEntry,
   getEntry,
+  listEntryNotes,
   listRevisions,
   putEntry,
   putMissReason,
@@ -381,8 +386,16 @@ export function scheduleRoutes(db: Database): Router {
       const { id } = await scopedSchedule(req);
       afterScope(req, canManageSchedules, DENIED);
       const schedule = await endSchedule(db, id, req.auditActor);
-      const regenerated = await regenerateFutureWindows(db, id);
-      res.json({ schedule, regenerated });
+      /*
+       * Not `regenerateFutureWindows` (D97). That one preserves the window in
+       * progress, because normally the admin is changing the times and a
+       * worker may be partway through the current one. Ending the schedule
+       * says stop asking for this form at all, so the open window goes too:
+       * left behind it would sit on the screen and then be marked missed for a
+       * check nobody wants any more.
+       */
+      const removed = await removeOpenWindows(db, id);
+      res.json({ schedule, removed });
     }),
   );
 
@@ -501,6 +514,40 @@ export function checkEntryRoutes(db: Database, keyRing: KeyRing): Router {
     asyncHandler(async (req, res) => {
       const id = await scopedEntry(req);
       res.json({ revisions: await listRevisions(db, keyRing, id) });
+    }),
+  );
+
+  /**
+   * Notes on a recorded check (D96). Every staff role reads them, because an
+   * explanation only the person who wrote it can see explains nothing.
+   */
+  router.get(
+    '/:id/notes',
+    asyncHandler(async (req, res) => {
+      const id = await scopedEntry(req);
+      afterScope(req, canRecordChecks, 'A self-access account cannot read staff notes.');
+      res.json({ notes: await listEntryNotes(db, keyRing, id) });
+    }),
+  );
+
+  router.post(
+    '/:id/notes',
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      const id = await scopedEntry(req);
+      afterScope(req, canAnnotateEntries, 'Only an admin can add a note to a recorded check.');
+
+      const request = addEntryNoteRequestSchema.parse(req.body);
+      const note = await addEntryNote(
+        db,
+        keyRing,
+        id,
+        request,
+        { userId: principal.user.id, role: principal.role, deviceId: null },
+        req.auditActor,
+      );
+
+      res.status(201).json({ note });
     }),
   );
 

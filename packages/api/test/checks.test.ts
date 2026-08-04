@@ -925,6 +925,149 @@ describe('checks', () => {
     });
   });
 
+  /**
+   * Ending a schedule (D97).
+   *
+   * Changing the times keeps the window in progress, because a worker may be
+   * partway through it. Ending the schedule is the opposite instruction, and
+   * the window that has not closed is exactly the one that would otherwise be
+   * marked missed for a check nobody wants any more.
+   */
+  describe('ending a schedule', () => {
+    async function scheduled(): Promise<Fixture & { scheduleId: string }> {
+      const fixture = await setUp();
+      const created = await api(
+        fixture.admin,
+        'post',
+        `/api/v1/participants/${fixture.participantId}/schedules`,
+      ).send({
+        templateId: fixture.templateId,
+        name: 'Vent observations',
+        activeFrom: today(),
+        segments: DAY_AND_NIGHT,
+      });
+      return { ...fixture, scheduleId: created.body.schedule.id as string };
+    }
+
+    /** The window open right now, which nobody has recorded against. */
+    async function openWindowOf(fixture: Fixture): Promise<{ id: string; endsAt: string }> {
+      const windows = await api(
+        fixture.admin,
+        'get',
+        `/api/v1/participants/${fixture.participantId}/windows`,
+      );
+      const now = new Date();
+      const open = (
+        windows.body.windows as { id: string; startsAt: string; endsAt: string }[]
+      ).find((one) => new Date(one.startsAt) <= now && new Date(one.endsAt) > now);
+      expect(open).toBeDefined();
+      return open!;
+    }
+
+    it('removes the window in progress, not only the future ones', async () => {
+      const fixture = await scheduled();
+      const open = await openWindowOf(fixture);
+
+      const response = await api(
+        fixture.admin,
+        'delete',
+        `/api/v1/schedules/${fixture.scheduleId}`,
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body.schedule.status).toBe('ended');
+      expect(response.body.removed.removed).toBeGreaterThan(0);
+      expect(response.body.removed.keptWithEntry).toBe(0);
+
+      const after = await api(fixture.admin, 'get', `/api/v1/windows/${open.id}`);
+      expect(after.status).toBe(404);
+    });
+
+    it('leaves nothing open on the schedule at all', async () => {
+      const fixture = await scheduled();
+
+      await api(fixture.admin, 'delete', `/api/v1/schedules/${fixture.scheduleId}`);
+
+      const windows = await api(
+        fixture.admin,
+        'get',
+        `/api/v1/participants/${fixture.participantId}/windows?from=${today()}&to=${addDays(today(), 7)}`,
+      );
+      const stillOpen = (windows.body.windows as { endsAt: string }[]).filter(
+        (one) => new Date(one.endsAt) > new Date(),
+      );
+      expect(stillOpen).toHaveLength(0);
+    });
+
+    /**
+     * A partial entry is still a record somebody made. Deleting the window
+     * would cascade the values away, and nothing in Vigilo hard-deletes a
+     * clinical record to tidy a schedule up.
+     */
+    it('keeps a window somebody has already recorded against', async () => {
+      const fixture = await scheduled();
+      const open = await openWindowOf(fixture);
+
+      await api(fixture.admin, 'put', `/api/v1/windows/${open.id}/entry`).send({
+        entryId: randomUUID(),
+        templateVersionId: fixture.versionId,
+        recordedAt: new Date().toISOString(),
+        // Only one of the two required fields, so the entry is partial.
+        values: [{ fieldKey: 'urine_output', number: 350 }],
+      });
+
+      const response = await api(
+        fixture.admin,
+        'delete',
+        `/api/v1/schedules/${fixture.scheduleId}`,
+      );
+
+      expect(response.body.removed.keptWithEntry).toBe(1);
+
+      const after = await api(fixture.admin, 'get', `/api/v1/windows/${open.id}`);
+      expect(after.status).toBe(200);
+      expect(after.body.window.entryId).not.toBeNull();
+    });
+
+    /** History is history. Ending a schedule never rewrites what happened. */
+    it('leaves closed windows alone', async () => {
+      const fixture = await scheduled();
+
+      const windows = await api(
+        fixture.admin,
+        'get',
+        `/api/v1/participants/${fixture.participantId}/windows`,
+      );
+      const closed = (windows.body.windows as { id: string; endsAt: string }[]).filter(
+        (one) => new Date(one.endsAt) <= new Date(),
+      );
+
+      await api(fixture.admin, 'delete', `/api/v1/schedules/${fixture.scheduleId}`);
+
+      for (const window of closed) {
+        const after = await api(fixture.admin, 'get', `/api/v1/windows/${window.id}`);
+        expect(after.status).toBe(200);
+      }
+    });
+
+    /**
+     * A device holding a window it can no longer record against is a worker
+     * pressing save into a 404 they cannot act on, so the removal is a
+     * tombstone as well as a delete.
+     */
+    it('tells devices the windows are gone', async () => {
+      const fixture = await scheduled();
+      const open = await openWindowOf(fixture);
+
+      await api(fixture.admin, 'delete', `/api/v1/schedules/${fixture.scheduleId}`);
+
+      const deletions = await h.ownerDb.execute<{ entity_id: string }>(
+        sql`select entity_id from sync_deletions where entity_type = 'check_window'`,
+      );
+      expect([...deletions].map((row) => row.entity_id)).toContain(open.id);
+    });
+  });
+
   describe('recording a check', () => {
     async function openWindow(): Promise<Fixture & { windowId: string }> {
       const fixture = await setUp();
@@ -1404,6 +1547,171 @@ describe('checks', () => {
 
       expect(response.status).toBe(403);
       expect(response.body.error.code).toBe('scope_denied');
+    });
+  });
+
+  /**
+   * Notes on a recorded check (D96).
+   *
+   * The check form records what was observed. A note is what somebody says
+   * about it afterwards, and it sits beside the record rather than in it: the
+   * values never move and the entry is not marked edited.
+   */
+  describe('notes on a recorded check', () => {
+    async function recorded(): Promise<Fixture & { entryId: string; windowId: string }> {
+      const fixture = await setUp();
+      await api(
+        fixture.admin,
+        'post',
+        `/api/v1/participants/${fixture.participantId}/schedules`,
+      ).send({
+        templateId: fixture.templateId,
+        name: 'Vent observations',
+        activeFrom: today(),
+        segments: [
+          {
+            windowMinutes: 60,
+            anchorTime: '00:00',
+            appliesFromTime: '00:00',
+            appliesToTime: '24:00',
+          },
+        ],
+      });
+
+      const windows = await api(
+        fixture.admin,
+        'get',
+        `/api/v1/participants/${fixture.participantId}/windows`,
+      );
+      const open = (
+        windows.body.windows as { id: string; startsAt: string; endsAt: string }[]
+      ).find((one) => new Date(one.startsAt) <= new Date() && new Date(one.endsAt) > new Date())!;
+
+      const entryId = randomUUID();
+      await api(fixture.admin, 'put', `/api/v1/windows/${open.id}/entry`).send({
+        entryId,
+        templateVersionId: fixture.versionId,
+        recordedAt: new Date().toISOString(),
+        values: [
+          { fieldKey: 'urine_output', number: 350 },
+          { fieldKey: 'vent_mode', json: 'bipap' },
+        ],
+      });
+
+      return { ...fixture, entryId, windowId: open.id };
+    }
+
+    it('adds a note to a completed check without touching it', async () => {
+      const { admin, entryId } = await recorded();
+
+      const added = await api(admin, 'post', `/api/v1/check-entries/${entryId}/notes`).send({
+        body: 'Output was low because the bag was changed early.',
+      });
+
+      expect(added.status).toBe(201);
+      expect(added.body.note.body).toBe('Output was low because the bag was changed early.');
+      expect(added.body.note.createdByName).toBe('Test admin');
+
+      const notes = await api(admin, 'get', `/api/v1/check-entries/${entryId}/notes`);
+      expect(notes.body.notes).toHaveLength(1);
+
+      // The record itself is untouched: a note explains an entry, it is not an
+      // edit of one, and "edited once" on a check nobody changed is a lie.
+      const revisions = await api(admin, 'get', `/api/v1/check-entries/${entryId}/revisions`);
+      expect(revisions.body.revisions).toEqual([]);
+    });
+
+    it('keeps them in the order they were written', async () => {
+      const { admin, entryId } = await recorded();
+
+      await api(admin, 'post', `/api/v1/check-entries/${entryId}/notes`).send({ body: 'First.' });
+      await api(admin, 'post', `/api/v1/check-entries/${entryId}/notes`).send({ body: 'Second.' });
+
+      const notes = await api(admin, 'get', `/api/v1/check-entries/${entryId}/notes`);
+      expect((notes.body.notes as { body: string }[]).map((one) => one.body)).toEqual([
+        'First.',
+        'Second.',
+      ]);
+    });
+
+    /** Free text about a person, so it never sits in the clear. */
+    it('encrypts the note', async () => {
+      const { admin, entryId } = await recorded();
+
+      await api(admin, 'post', `/api/v1/check-entries/${entryId}/notes`).send({
+        body: 'Family visited that afternoon.',
+      });
+
+      const [row] = await h.ownerDb.execute<{ dump: string }>(
+        sql`select check_entry_notes::text as dump from check_entry_notes limit 1`,
+      );
+      expect(row!.dump).not.toContain('Family visited');
+    });
+
+    /** Append-only, enforced by the grant rather than by nobody writing one. */
+    it('cannot be changed or removed by the app role', async () => {
+      const { admin, entryId } = await recorded();
+      await api(admin, 'post', `/api/v1/check-entries/${entryId}/notes`).send({ body: 'Stands.' });
+
+      await expect(h.db.execute(sql`delete from check_entry_notes`)).rejects.toThrow();
+      await expect(
+        h.db.execute(sql`update check_entry_notes set created_by = null`),
+      ).rejects.toThrow();
+    });
+
+    it('is written by an admin and read by everybody on the team', async () => {
+      const { admin, participantId, entryId } = await recorded();
+      await api(admin, 'post', `/api/v1/check-entries/${entryId}/notes`).send({
+        body: 'Explained at handover.',
+      });
+
+      const workerUser = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
+      await assign(h.ownerDb, workerUser.id, participantId);
+      const worker = await signIn(h, workerUser);
+
+      const read = await api(worker, 'get', `/api/v1/check-entries/${entryId}/notes`);
+      expect(read.status).toBe(200);
+      expect(read.body.notes).toHaveLength(1);
+
+      const written = await api(worker, 'post', `/api/v1/check-entries/${entryId}/notes`).send({
+        body: 'Not mine to add.',
+      });
+      expect(written.status).toBe(403);
+      expect(written.body.error.code).toBe('scope_denied');
+    });
+
+    it('refuses a caller who is not in scope for the participant', async () => {
+      const { admin, entryId } = await recorded();
+      await api(admin, 'post', `/api/v1/check-entries/${entryId}/notes`).send({ body: 'Mine.' });
+
+      const outsiderUser = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
+      const outsider = await signIn(h, outsiderUser);
+
+      const response = await api(outsider, 'get', `/api/v1/check-entries/${entryId}/notes`);
+      expect(response.status).toBe(403);
+    });
+
+    it('refuses an empty note', async () => {
+      const { admin, entryId } = await recorded();
+
+      const response = await api(admin, 'post', `/api/v1/check-entries/${entryId}/notes`).send({
+        body: '   ',
+      });
+      expect(response.status).toBe(422);
+    });
+
+    /** Audited like everything else, and without the words in the metadata. */
+    it('audits that a note was added, never what it said', async () => {
+      const { admin, entryId } = await recorded();
+      await api(admin, 'post', `/api/v1/check-entries/${entryId}/notes`).send({
+        body: 'Something private about a person.',
+      });
+
+      const [row] = await h.ownerDb.execute<{ metadata: unknown }>(
+        sql`select metadata from audit_log where action = 'check_entry.note' limit 1`,
+      );
+      expect(row).toBeDefined();
+      expect(JSON.stringify(row!.metadata)).not.toContain('private');
     });
   });
 

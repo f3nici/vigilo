@@ -71,7 +71,7 @@ const appVersion = __APP_VERSION__;
               target="_blank"
               rel="noopener noreferrer"
             >
-              Created by Fenici
+              Fenici
             </a>
           </dd>
         </div>

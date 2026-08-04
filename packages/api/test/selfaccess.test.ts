@@ -268,6 +268,36 @@ describe('participant self-access', () => {
       expect(payload).not.toMatch(/isLate|compliance|expected|editCount/i);
     });
 
+    /**
+     * D96 notes are staff notes about a record, and D71 says these DTOs are
+     * built field by field rather than filtered from a staff one. A note
+     * reaching this screen would be a staff conversation arriving on the
+     * participant's copy of their own day.
+     */
+    it('never shows a staff note added to a check', async () => {
+      const fixture = await setUp();
+      const windowId = await schedule(fixture);
+      await recordCheck(fixture, windowId);
+
+      const [entry] = await h.ownerDb.execute<{ id: string }>(
+        sql`select id from check_entries where participant_id = ${fixture.participantId}::uuid`,
+      );
+      const added = await api(
+        fixture.admin,
+        'post',
+        `/api/v1/check-entries/${entry!.id}/notes`,
+      ).send({ body: 'Discussed with the team leader.' });
+      expect(added.status).toBe(201);
+
+      const response = await api(fixture.me, 'get', '/api/v1/me/day');
+      expect(JSON.stringify(response.body)).not.toContain('team leader');
+
+      // And the route itself is not on the allow-list, so there is no second
+      // way in either (D70).
+      const direct = await api(fixture.me, 'get', `/api/v1/check-entries/${entry!.id}/notes`);
+      expect(direct.status).toBe(403);
+    });
+
     it('says plainly when nothing was written down', async () => {
       const fixture = await setUp();
 

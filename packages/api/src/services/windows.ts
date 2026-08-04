@@ -54,6 +54,7 @@ import { HttpError } from '../middleware/errors.js';
 
 export const VALUE_TEXT_COLUMN = 'check_entry_values.value_text_enc';
 export const MISS_NOTE_COLUMN = 'window_miss_reasons.note_enc';
+export const ENTRY_NOTE_COLUMN = 'check_entry_notes.body_enc';
 
 /** How far ahead the grid is laid down (doc 01 §5.3). */
 export const HORIZON_DAYS = 7;
@@ -298,6 +299,53 @@ export async function regenerateFutureWindows(
   const after = await countWindows(db, scheduleId);
 
   return { removed: removed.length, created: after - before, preserved: preserved.length };
+}
+
+/**
+ * Clears away everything still open on a schedule that has just ended (D97).
+ *
+ * `regenerateFutureWindows` deliberately leaves the window in progress alone,
+ * because pulling the grid out from under a worker mid-entry loses their place
+ * in a check they are standing there doing. Ending a schedule is the opposite
+ * instruction: an admin has said stop asking for this form, and the window
+ * open right now is exactly the one that would otherwise sit on the screen for
+ * another two hours and then be marked missed for a check nobody wants any
+ * more.
+ *
+ * So everything that has not closed is removed, in progress or not. A window
+ * that already holds an entry is kept, whether that entry is complete or
+ * partial: the values are a record somebody made, deleting the window would
+ * cascade them away, and nothing in Vigilo hard-deletes a clinical record. It
+ * closes on its own and reads as what it is.
+ */
+export async function removeOpenWindows(
+  db: Database,
+  scheduleId: string,
+  now = new Date(),
+): Promise<{ removed: number; keptWithEntry: number }> {
+  const removed = await db
+    .delete(checkWindows)
+    .where(
+      and(
+        eq(checkWindows.scheduleId, scheduleId),
+        gt(checkWindows.endsAt, now),
+        sql`not exists (select 1 from check_entries where check_entries.window_id = ${checkWindows.id})`,
+      ),
+    )
+    .returning({ id: checkWindows.id, participantId: checkWindows.participantId });
+
+  // Devices hold these rows, so they need to be told the window is gone or a
+  // worker records against one that no longer exists (the same reason
+  // `regenerateFutureWindows` writes tombstones).
+  await recordDeletions(db, 'check_window', removed);
+
+  const [kept] = await db
+    .select({ count: sql<string>`count(*)::text` })
+    .from(checkWindows)
+    .innerJoin(checkEntries, eq(checkEntries.windowId, checkWindows.id))
+    .where(and(eq(checkWindows.scheduleId, scheduleId), gt(checkWindows.endsAt, now)));
+
+  return { removed: removed.length, keptWithEntry: Number(kept?.count ?? 0) };
 }
 
 async function countWindows(db: Database, scheduleId: string): Promise<number> {

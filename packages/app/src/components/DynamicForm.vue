@@ -41,8 +41,49 @@ function problemFor(key: string): string | null {
   return validateFieldValue(field, valueOf(key));
 }
 
-function setNumber(key: string, raw: string): void {
-  emit('change', { fieldKey: key, number: raw.trim() === '' ? null : Number(raw) });
+/* ------------------------------------------------------------ numbers */
+
+/**
+ * What is in the number box, as typed.
+ *
+ * A number field cannot render `String(value.number)` back into the input
+ * while somebody is typing, because a half-typed decimal is not a number yet.
+ * "36." parses to 36, which renders as "36", which takes the point away as
+ * fast as it is typed, and a worker on a form with one decimal place could
+ * never enter 36.4 at all. So the typed text is what is shown and the parsed
+ * number is what is recorded, and they are kept as two separate things.
+ *
+ * The draft is dropped as soon as it stops agreeing with the value in the
+ * record, which is what lets a value arriving from anywhere else (a reload, a
+ * saved entry) render normally.
+ */
+const numberDraft = ref<Record<string, string>>({});
+
+/** Digits, one point, an optional leading sign: a number partway through. */
+const PARTIAL_NUMBER = /^-?\d*(\.\d*)?$/;
+
+function setNumber(key: string, raw: string, input: HTMLInputElement): void {
+  /*
+   * Anything that is not on its way to being a number is refused outright and
+   * the box is put back the way it was. `type="text"` is what makes the
+   * decimal keypad reliable across browsers, so a stray letter is possible and
+   * `Number('3a')` is NaN: silently recording nothing for a field somebody
+   * believes they filled in is the one outcome to avoid here.
+   */
+  if (!PARTIAL_NUMBER.test(raw)) {
+    input.value = numberText(key);
+    return;
+  }
+
+  numberDraft.value = { ...numberDraft.value, [key]: raw };
+
+  const trimmed = raw.trim();
+  // "", "-" and "." are all "nothing recorded yet" rather than a number.
+  const parsed = trimmed === '' ? null : Number(trimmed);
+  emit('change', {
+    fieldKey: key,
+    number: parsed === null || Number.isNaN(parsed) ? null : parsed,
+  });
 }
 
 function setBool(key: string, value: boolean | null): void {
@@ -75,8 +116,18 @@ function asString(key: string): string {
 }
 
 function numberText(key: string): string {
-  const current = valueOf(key).number;
-  return current === null || current === undefined ? '' : String(current);
+  const current = valueOf(key).number ?? null;
+  const draft = numberDraft.value[key];
+
+  if (draft !== undefined) {
+    const trimmed = draft.trim();
+    const parsed = trimmed === '' ? null : Number(trimmed);
+    // Same number, so the draft is the truer rendering of it: it still has the
+    // trailing point or the trailing zero the worker is typing through.
+    if ((Number.isNaN(parsed) ? null : parsed) === current) return draft;
+  }
+
+  return current === null ? '' : String(current);
 }
 
 /* ------------------------------------------------------- several times */
@@ -150,7 +201,13 @@ function removeTime(key: string, index: number): void {
             inputmode="decimal"
             :value="numberText(field.key)"
             :aria-label="field.label"
-            @input="setNumber(field.key, ($event.target as HTMLInputElement).value)"
+            @input="
+              setNumber(
+                field.key,
+                ($event.target as HTMLInputElement).value,
+                $event.target as HTMLInputElement,
+              )
+            "
           />
           <span v-if="field.unit" class="text-text-secondary">{{ field.unit }}</span>
         </div>

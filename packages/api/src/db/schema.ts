@@ -842,6 +842,30 @@ export const checkEntryRevisions = pgTable(
 
 export type CheckEntryRevisionRow = typeof checkEntryRevisions.$inferSelect;
 
+/**
+ * A note added to a recorded check afterwards (D96).
+ *
+ * Beside the record, never part of it: the values stay as the worker recorded
+ * them and this says what somebody reading them later needs to know. Free text
+ * about a person, so encrypted, and append-only, enforced by the grant in
+ * migration 0022 rather than by everybody remembering.
+ */
+export const checkEntryNotes = pgTable(
+  'check_entry_notes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    entryId: uuid('entry_id')
+      .notNull()
+      .references(() => checkEntries.id, { onDelete: 'cascade' }),
+    bodyEnc: encrypted('body_enc').notNull(),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('check_entry_notes_entry_idx').on(table.entryId, table.createdAt)],
+);
+
+export type CheckEntryNoteRow = typeof checkEntryNotes.$inferSelect;
+
 /** Admin-configurable, because this is the organisation's vocabulary. */
 export const missedReasonCodes = pgTable(
   'missed_reason_codes',

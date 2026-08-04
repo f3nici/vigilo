@@ -339,7 +339,10 @@ export async function putSegments(
   return getSchedule(db, id);
 }
 
-/** Ends a schedule. Past windows stay; future empty ones are cleared away. */
+/**
+ * Ends a schedule. Past windows stay; everything still open is cleared away by
+ * the caller through `removeOpenWindows` (D97).
+ */
 export async function endSchedule(
   db: Database,
   id: string,
