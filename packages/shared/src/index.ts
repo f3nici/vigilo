@@ -20,6 +20,7 @@ export * from './incidents.js';
 export * from './intervals.js';
 export * from './medications.js';
 export * from './participants.js';
+export * from './passkeys.js';
 export * from './password.js';
 export * from './reports.js';
 export * from './richtext.js';

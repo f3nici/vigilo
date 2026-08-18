@@ -1690,3 +1690,86 @@ export const authChallenges = pgTable(
   },
   (table) => [uniqueIndex('auth_challenges_token_idx').on(table.tokenHash)],
 );
+
+/**
+ * Passkeys (#24).
+ *
+ * The authenticator holds the private key and Vigilo holds the public one, so
+ * there is nothing here worth stealing: the row cannot sign anything. What it
+ * can do is say which account a credential belongs to, which is why
+ * `credential_id` is unique across the whole table rather than per user.
+ */
+export const webauthnCredentials = pgTable(
+  'webauthn_credentials',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Base64url, as the authenticator reports it. */
+    credentialId: text('credential_id').notNull(),
+    publicKey: encrypted('public_key').notNull(),
+    /**
+     * A counter going backwards means a cloned authenticator. Plenty of them
+     * report zero forever, so it is a signal and never a gate.
+     */
+    signCount: bigint('sign_count', { mode: 'number' }).notNull().default(0),
+    transports: text('transports'),
+    /** True where the authenticator syncs it: the cross-device passkey. */
+    backedUp: boolean('backed_up').notNull().default(false),
+    name: text('name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex('webauthn_credentials_credential_idx').on(table.credentialId),
+    index('webauthn_credentials_user_idx').on(table.userId),
+  ],
+);
+
+/** The challenge half of both WebAuthn ceremonies. Single use, short lived. */
+export const webauthnChallenges = pgTable(
+  'webauthn_challenges',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    challenge: text('challenge').notNull(),
+    /** Null on a sign-in: a discoverable credential says who it is afterwards. */
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    purpose: text('purpose').notNull(),
+    deviceId: uuid('device_id'),
+    platform: platformEnum('platform'),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex('webauthn_challenges_challenge_idx').on(table.challenge)],
+);
+
+/**
+ * Quick sign-in on a device that has already signed in properly (#24).
+ *
+ * Not a factor by itself (doc 01 §10): the secret is sealed in the device's
+ * own secure store behind its fingerprint or a six-digit PIN, and redeeming it
+ * returns a session the account already earned. It expires if it is not used,
+ * so a phone left in a drawer stops being a way in.
+ */
+export const deviceCredentials = pgTable(
+  'device_credentials',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    deviceId: uuid('device_id'),
+    /** Argon2, because it is redeemed the same way a password is. */
+    secretHash: text('secret_hash').notNull(),
+    method: text('method').notNull(),
+    label: text('label').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  },
+  (table) => [index('device_credentials_user_idx').on(table.userId)],
+);

@@ -171,6 +171,19 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/SystemView.vue'),
         meta: { requiresAuth: true, title: 'System' },
       },
+      {
+        /*
+         * Every role, participants included (#24). It is an account screen,
+         * not a records screen: it talks to `/auth` and nothing else, which is
+         * the one part of the API a self-access account was always allowed
+         * (D70). Somebody who cannot set up their own passkey has to ask an
+         * admin for one, and there is nothing an admin could do.
+         */
+        path: 'signing-in',
+        name: 'sign-in-options',
+        component: () => import('@/views/SignInOptionsView.vue'),
+        meta: { requiresAuth: true, title: 'Signing in' },
+      },
 
       /*
        * Participant self-access (doc 06 §6). The only three screens that role
@@ -248,6 +261,13 @@ export const SELF_ACCESS_ROUTES = new Set([
   'my-reports',
   'set-password',
   'set-up-two-factor',
+  /*
+   * Their own account, not a fourth records screen (#24). It talks to `/auth`
+   * and nothing else, which is the one part of the API this role was always
+   * allowed (D70), and somebody who cannot set up their own passkey has to ask
+   * an admin for one, which is not something an admin can do.
+   */
+  'sign-in-options',
   'install',
   'not-found',
 ]);

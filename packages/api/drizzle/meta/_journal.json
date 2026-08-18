@@ -162,6 +162,13 @@
       "when": 1785369163778,
       "tag": "0022_check_entry_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1785369163779,
+      "tag": "0023_passkeys_and_quick_sign_in",
+      "breakpoints": true
     }
   ]
 }

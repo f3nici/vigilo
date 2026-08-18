@@ -450,6 +450,18 @@ invites.
 - **Two-factor (TOTP) is required for admin, team leader and nurse accounts, and
   optional for support workers.** Enrolment is in-app via QR code, with
   single-use recovery codes shown once at enrolment.
+- **A passkey signs a person in without either** (D99). It is a WebAuthn
+  credential the authenticator holds and the server verifies, set up by the
+  person themselves on the "Signing in" screen, and it travels with them: one
+  registered on a phone signs them in on a laptop, because the phone's keychain
+  took it there. It stands in for the second factor as well, because the
+  ceremony only completes after the device has verified the person, and the
+  server checks that rather than assuming it.
+- **Quick sign-in releases a session on a device that has already signed in**,
+  by fingerprint or by a six-digit PIN, and is not a factor by itself. It is
+  per device, expires after sixty days unused, and is cleared by signing out or
+  by a password change. Biometric quick sign-in is offered only on an installed
+  app on a phone or tablet; the PIN is offered wherever it is not.
 - After first sign-in on an installed PWA, unlock on reopen uses the platform
   authenticator (WebAuthn, which surfaces as Face ID, Touch ID or fingerprint).
   It releases a locally held refresh token, it is not an authentication factor by

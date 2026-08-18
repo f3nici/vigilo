@@ -41,6 +41,15 @@ import {
   myRecordsSchema,
   loginResponseSchema,
   meResponseSchema,
+  passkeySummarySchema,
+  quickSignInCredentialSchema,
+  quickSignInSummarySchema,
+  type PasskeyAuthentication,
+  type PasskeyRegistration,
+  type PasskeySummary,
+  type QuickSignInCredential,
+  type QuickSignInMethod,
+  type QuickSignInSummary,
   readyResponseSchema,
   totpEnrolResponseSchema,
   userSummarySchema,
@@ -265,6 +274,88 @@ export async function login(email: string, password: string): Promise<LoginRespo
 export async function submitTotp(challengeId: string, code: string): Promise<LoginResponse> {
   return loginResponseSchema.parse(
     await request('/v1/auth/totp', { method: 'POST', body: { challengeId, code } }),
+  );
+}
+
+/* --------------------------------------------------- passkeys and quick sign-in */
+
+/**
+ * The passkey ceremonies (#24).
+ *
+ * The options blob is passed through as it came, because it is the WebAuthn
+ * spec's own shape and the platform adapter is what knows how to feed it to a
+ * browser. Parsing it into something of our own here would be inventing a
+ * second contract for no gain.
+ */
+const optionsSchema = z.object({ options: z.record(z.unknown()) });
+
+export async function passkeyRegistrationOptions(): Promise<Record<string, unknown>> {
+  return optionsSchema.parse(await request('/v1/auth/passkeys/options', { method: 'POST' }))
+    .options;
+}
+
+export async function registerPasskey(
+  name: string,
+  credential: PasskeyRegistration,
+): Promise<PasskeySummary> {
+  return z
+    .object({ passkey: passkeySummarySchema })
+    .parse(await request('/v1/auth/passkeys', { method: 'POST', body: { name, credential } }))
+    .passkey;
+}
+
+export async function listPasskeys(): Promise<PasskeySummary[]> {
+  return z
+    .object({ passkeys: z.array(passkeySummarySchema) })
+    .parse(await request('/v1/auth/passkeys')).passkeys;
+}
+
+export async function renamePasskey(id: string, name: string): Promise<PasskeySummary> {
+  return z
+    .object({ passkey: passkeySummarySchema })
+    .parse(await request(`/v1/auth/passkeys/${id}`, { method: 'PATCH', body: { name } })).passkey;
+}
+
+export async function removePasskey(id: string): Promise<void> {
+  await request(`/v1/auth/passkeys/${id}`, { method: 'DELETE' });
+}
+
+export async function passkeySignInOptions(): Promise<Record<string, unknown>> {
+  return optionsSchema.parse(
+    await request('/v1/auth/passkey/options', { method: 'POST', body: {} }),
+  ).options;
+}
+
+export async function passkeyLogin(credential: PasskeyAuthentication): Promise<LoginResponse> {
+  return loginResponseSchema.parse(
+    await request('/v1/auth/passkey/login', { method: 'POST', body: { credential } }),
+  );
+}
+
+export async function enrolQuickSignIn(
+  method: QuickSignInMethod,
+  label: string,
+): Promise<QuickSignInCredential> {
+  return z
+    .object({ credential: quickSignInCredentialSchema })
+    .parse(
+      await request('/v1/auth/quick-sign-in/enrol', { method: 'POST', body: { method, label } }),
+    ).credential;
+}
+
+export async function listQuickSignIns(): Promise<QuickSignInSummary[]> {
+  return z
+    .object({ devices: z.array(quickSignInSummarySchema) })
+    .parse(await request('/v1/auth/quick-sign-in')).devices;
+}
+
+export async function removeQuickSignIn(id: string): Promise<void> {
+  await request(`/v1/auth/quick-sign-in/${id}`, { method: 'DELETE' });
+}
+
+export async function quickSignIn(credentialId: string, secret: string): Promise<LoginResponse> {
+  return loginResponseSchema.parse(
+    await request('/v1/auth/quick-sign-in', { method: 'POST', body: { credentialId, secret } }),
   );
 }
 

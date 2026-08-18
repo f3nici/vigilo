@@ -41,6 +41,8 @@ const nav = computed(() => {
       { name: 'my-day', label: 'My day' },
       { name: 'my-records', label: 'My records' },
       { name: 'my-reports', label: 'My reports' },
+      // Their own account, not a fourth records screen (#24).
+      { name: 'sign-in-options', label: 'Signing in' },
     ];
   }
 
@@ -62,6 +64,7 @@ const nav = computed(() => {
     items.push({ name: 'diary-categories', label: 'Diary' });
     items.push({ name: 'users', label: 'People' });
   }
+  items.push({ name: 'sign-in-options', label: 'Signing in' });
   items.push({ name: 'system', label: 'System' });
   return items;
 });

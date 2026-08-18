@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getPlatform, isInstalled } from './index.js';
+import { canOfferBiometric, getPlatform, isHandheld, isInstalled } from './index.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -63,6 +63,76 @@ describe('WebSecureStore', () => {
   it('is not unlocked before anybody has unlocked it', () => {
     expect(getPlatform().secureStore.isUnlocked()).toBe(false);
     expect(getPlatform().secureStore.method()).toBeNull();
+  });
+});
+
+describe('WebPasskeys', () => {
+  it('reports no support at all without WebAuthn', async () => {
+    await expect(getPlatform().passkeys.availability()).resolves.toEqual({
+      supported: false,
+      platformAuthenticator: false,
+    });
+  });
+
+  it('still reports support when the platform check throws', async () => {
+    // A browser with the object and no answer can still use a security key,
+    // so this is not "no passkeys here".
+    vi.stubGlobal('window', {
+      PublicKeyCredential: {
+        isUserVerifyingPlatformAuthenticatorAvailable: () => Promise.reject(new Error('nope')),
+      },
+    });
+
+    await expect(getPlatform().passkeys.availability()).resolves.toEqual({
+      supported: true,
+      platformAuthenticator: false,
+    });
+  });
+});
+
+describe('who gets offered biometric sign-in', () => {
+  /** Installed, handheld and a platform authenticator, all three (#24). */
+  function browser(options: {
+    installed: boolean;
+    coarse: boolean;
+    touch: number;
+    authenticator: boolean;
+  }): void {
+    vi.stubGlobal('window', {
+      matchMedia: (query: string) => ({
+        matches: query.includes('standalone') ? options.installed : options.coarse,
+      }),
+      navigator: { maxTouchPoints: options.touch },
+      PublicKeyCredential: {
+        isUserVerifyingPlatformAuthenticatorAvailable: () => Promise.resolve(options.authenticator),
+      },
+    });
+    vi.stubGlobal('navigator', { maxTouchPoints: options.touch });
+  }
+
+  it('is offered on an installed phone with a fingerprint reader', async () => {
+    browser({ installed: true, coarse: true, touch: 5, authenticator: true });
+    await expect(canOfferBiometric()).resolves.toBe(true);
+  });
+
+  it('is not offered in a browser tab, however capable the phone is', async () => {
+    // A fingerprint that unlocks a tab somebody opened once is a credential
+    // sitting in a tab nobody will close.
+    browser({ installed: false, coarse: true, touch: 5, authenticator: true });
+    await expect(canOfferBiometric()).resolves.toBe(false);
+  });
+
+  it('is not offered on a desktop with a fingerprint reader', async () => {
+    // Often a shared machine in an office, where it is the wrong offer even
+    // where it works. The PIN is offered wherever this is not.
+    browser({ installed: true, coarse: false, touch: 0, authenticator: true });
+    await expect(canOfferBiometric()).resolves.toBe(false);
+    expect(isHandheld()).toBe(false);
+  });
+
+  it('is not offered where the device has no platform authenticator', async () => {
+    browser({ installed: true, coarse: true, touch: 5, authenticator: false });
+    await expect(canOfferBiometric()).resolves.toBe(false);
   });
 });
 

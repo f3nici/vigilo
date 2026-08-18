@@ -4,7 +4,8 @@ Care records platform for a disability support team. Participant diaries and
 admin-defined observation checks, working offline. Ships as an installable PWA
 first, with native Android and iOS builds as the final phases.
 
-**Status: Phases 0 to 9 done, plus a round of pre-hardening fixes.** Phase 5 was the v1 line and everything since is
+**Status: Phases 0 to 9 done, plus a round of pre-hardening fixes and the
+open issues.** Phase 5 was the v1 line and everything since is
 additive. Monorepo, Docker Compose and CI; identity, roles, TOTP, the
 break-glass CLI, the scope resolver, the audit log and the encryption layer;
 participant records with alerts, emergency contacts, emergency plans and
@@ -78,6 +79,18 @@ wins.
   disguises that. The tab opens on a month grid and the selected day. The old
   rule refusing anything in the future is gone, and `OCCURRED_AT_SKEW_MINUTES`
   with it.
+- **A passkey signs somebody in; a PIN or a fingerprint only releases what the
+  device already holds** (D99). Two different mechanisms behind one screen, and
+  the difference is the whole design. `webauthn_credentials` is a real
+  credential verified against the server and it counts as the second factor,
+  because the ceremony only completes after the device verified the person.
+  `device_credentials` is a secret issued to a session that already existed,
+  sealed in the secure store, and it is **not a factor**: it expires unused, a
+  wrong secret retires it outright, and a password change or a sign-out kills
+  it. Biometric quick sign-in is offered only on an installed app on a
+  handheld, the PIN wherever it is not. The password never goes away, because
+  with no email an account whose only credential is on a lost phone is one
+  nobody can hand back.
 - **There are no notifications** (D88). The job, the routes, the VAPID config,
   the web-push dependency and the app's push adapter are gone, because with no
   roster there was no way to tell a worker on shift from one asleep. The
@@ -106,6 +119,10 @@ wins.
 - **No email.** No password reset emails, no digests, no invites. Admins issue
   credentials directly.
 - **Nothing sensitive in push payloads.** An initial and surname is the ceiling.
+- **A validation failure never reaches a user in Zod's words** (#23).
+  `describeIssue` in `packages/shared/src/validation.ts` turns one into plain
+  English and is what the API's error middleware and the two client-side forms
+  both call. A message an author wrote by hand is left exactly as it is.
 - Australian English in all user-facing strings.
 - **Source-available, not open source** (D98). PolyForm Noncommercial 1.0.0,
   copyright Fenici. Noncommercial use is free; commercial use needs written
@@ -132,7 +149,7 @@ Per the global instructions on this machine:
 packages/shared   types, Zod schemas, window/coverage/completeness logic. No I/O.
 packages/api      Express 5 + Drizzle + Postgres. routes / services / db / crypto / jobs / sync / cli / reports
 packages/app      Vue 3 SPA + service worker. views / components / stores / db / sync / sw / platform
-                  platform/web  = SQLite-WASM + OPFS, WebAuthn, Web Push  (v1)
+                  platform/web  = SQLite-WASM + OPFS, WebAuthn (unlock and passkeys)  (v1)
                   platform/native = Capacitor SQLite, Keychain, FCM       (final phases)
                   android/ and ios/ appear in the final phases
 ```

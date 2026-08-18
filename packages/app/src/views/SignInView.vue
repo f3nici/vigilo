@@ -1,9 +1,16 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import VigiloMark from '@/components/VigiloMark.vue';
 import FormError from '@/components/FormError.vue';
 import { useSessionStore } from '@/stores/session';
+import { getPlatform } from '@/platform';
+import {
+  localQuickSignIn,
+  signInWithPasskey,
+  signInWithQuickCredential,
+  type LocalQuickSignIn,
+} from '@/lib/signin-options';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 
@@ -20,6 +27,78 @@ const code = ref('');
 const challengeId = ref('');
 const error = ref('');
 const busy = ref(false);
+
+/**
+ * The two ways in that are not a password (#24).
+ *
+ * A passkey is offered wherever the browser has WebAuthn, because the
+ * credential may live on a phone this laptop has never met. Quick sign-in is
+ * offered only where this device has one, because it is this device's.
+ */
+const passkeysSupported = ref(false);
+const quick = ref<LocalQuickSignIn | null>(null);
+const pin = ref('');
+const showPin = ref(false);
+
+onMounted(async () => {
+  quick.value = localQuickSignIn();
+  passkeysSupported.value = (await getPlatform().passkeys.availability()).supported;
+});
+
+async function useQuickSignIn(): Promise<void> {
+  const local = quick.value;
+  if (local === null || busy.value) return;
+
+  busy.value = true;
+  error.value = '';
+  try {
+    const secureStore = getPlatform().secureStore;
+    const unlocked =
+      local.method === 'biometric'
+        ? await secureStore.unlockWithBiometric()
+        : await secureStore.unlockWithPin(pin.value);
+
+    if (!unlocked) {
+      // A fingerprint that will not read is not a failure worth an alarm: the
+      // PIN is right there, and so is the password.
+      error.value =
+        local.method === 'biometric'
+          ? 'That did not read. Use your PIN or your password.'
+          : 'That PIN did not work.';
+      showPin.value = true;
+      return;
+    }
+
+    pin.value = '';
+    if (await signInWithQuickCredential()) {
+      await finish();
+      return;
+    }
+
+    quick.value = localQuickSignIn();
+    error.value = 'Quick sign-in is not set up on this device any more. Use your password.';
+  } catch (err) {
+    error.value = messageFor(err);
+    quick.value = localQuickSignIn();
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function usePasskey(): Promise<void> {
+  if (busy.value) return;
+  busy.value = true;
+  error.value = '';
+  try {
+    // False means the prompt was dismissed, which is somebody changing their
+    // mind rather than something going wrong.
+    if (await signInWithPasskey()) await finish();
+  } catch (err) {
+    error.value = messageFor(err);
+  } finally {
+    busy.value = false;
+  }
+}
 
 function messageFor(err: unknown): string {
   if (err instanceof ApiRequestError) return err.message;
@@ -139,6 +218,57 @@ function startAgain(): void {
       <button class="btn btn-primary w-full" type="submit" :disabled="busy">
         {{ busy ? 'Signing in' : 'Sign in' }}
       </button>
+
+      <!--
+        The other ways in (#24). Under the password rather than above it: the
+        password is what everybody has and what an admin can hand back, and
+        these are the shortcuts somebody has set up for themselves.
+      -->
+      <div v-if="quick || passkeysSupported" class="border-border-default space-y-2 border-t pt-4">
+        <template v-if="quick">
+          <button
+            v-if="quick.method === 'biometric' && !showPin"
+            type="button"
+            class="btn border-border-default w-full border"
+            :disabled="busy"
+            @click="useQuickSignIn"
+          >
+            Sign in with fingerprint or face
+          </button>
+
+          <div v-else class="space-y-2">
+            <label class="field-label" for="quick-pin">PIN for this device</label>
+            <input
+              id="quick-pin"
+              v-model="pin"
+              class="field"
+              type="password"
+              inputmode="numeric"
+              autocomplete="off"
+              :disabled="busy"
+              @keyup.enter="useQuickSignIn"
+            />
+            <button
+              type="button"
+              class="btn border-border-default w-full border"
+              :disabled="busy"
+              @click="useQuickSignIn"
+            >
+              Sign in with this PIN
+            </button>
+          </div>
+        </template>
+
+        <button
+          v-if="passkeysSupported"
+          type="button"
+          class="btn border-border-default w-full border"
+          :disabled="busy"
+          @click="usePasskey"
+        >
+          Sign in with a passkey
+        </button>
+      </div>
 
       <p class="text-text-secondary text-sm">
         Accounts are created by an admin. If you cannot get in, ask them to reset your password.
