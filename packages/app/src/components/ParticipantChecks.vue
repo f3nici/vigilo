@@ -35,6 +35,7 @@ const reasonCodes = ref<MissedReasonCode[]>([]);
 const outstanding = ref<CheckWindow[]>([]);
 const bulkOpen = ref(false);
 const bulkLoading = ref(false);
+const bulkNote = ref('');
 const timeZone = ref(session.timeZone);
 const date = ref(localDateOf(new Date(), session.timeZone));
 const loading = ref(true);
@@ -97,6 +98,15 @@ async function openBulk(): Promise<void> {
       .filter((window) => needsMissReason(window.status, window.missReason !== null))
       .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
     reasonCodes.value = codes;
+
+    if (outstanding.value.length === 0) {
+      // The button is always live, so pressing it has to answer rather than
+      // open an empty panel (D78).
+      bulkNote.value = `Nothing in the last ${BULK_LOOKBACK_DAYS} days is waiting for a reason.`;
+      return;
+    }
+
+    bulkNote.value = '';
     bulkOpen.value = true;
   } catch (err) {
     error.value =
@@ -156,7 +166,25 @@ function shiftDay(by: number): void {
       <span class="text-text-secondary text-sm">
         {{ formatDayHeading(`${date}T12:00:00Z`, timeZone) }}
       </span>
+
+      <!--
+        Not inside the day's own list of misses (#19). A check form left
+        switched on by mistake is noticed days later, and by then the misses
+        are spread over every day since, most of which this screen is not
+        showing. So the button gathers them itself.
+      -->
+      <button
+        v-if="!bulkOpen"
+        type="button"
+        class="btn border-border-default ml-auto border text-sm"
+        :disabled="bulkLoading"
+        @click="openBulk"
+      >
+        {{ bulkLoading ? 'Loading…' : 'Answer missed checks' }}
+      </button>
     </div>
+
+    <p v-if="bulkNote" class="text-text-secondary text-sm">{{ bulkNote }}</p>
 
     <p v-if="loading" class="text-text-secondary">Loading.</p>
 
@@ -184,21 +212,10 @@ function shiftDay(by: number): void {
       />
 
       <div v-if="unresolved.length > 0" class="space-y-2">
-        <div class="flex flex-wrap items-center gap-3">
-          <p class="text-state-missed font-semibold">
-            {{ unresolved.length }} missed
-            {{ unresolved.length === 1 ? 'check needs' : 'checks need' }} a reason
-          </p>
-          <button
-            v-if="!bulkOpen"
-            type="button"
-            class="btn border-border-default ml-auto border text-sm"
-            :disabled="bulkLoading"
-            @click="openBulk"
-          >
-            {{ bulkLoading ? 'Loading…' : 'Answer several at once' }}
-          </button>
-        </div>
+        <p class="text-state-missed font-semibold">
+          {{ unresolved.length }} missed
+          {{ unresolved.length === 1 ? 'check needs' : 'checks need' }} a reason
+        </p>
         <WindowRow
           v-for="window in unresolved"
           :key="window.id"
