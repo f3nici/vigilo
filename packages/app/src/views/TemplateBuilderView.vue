@@ -52,8 +52,46 @@ const schema = computed<TemplateSchema>(() => ({ fields: fields.value }));
 const problems = computed(() => validateTemplateSchema(schema.value));
 const current = computed(() => (selected.value === null ? null : fields.value[selected.value]));
 
-/** The preview needs no answers: it is showing the form, not filling it. */
-const emptyValues = computed<Record<string, CheckValue>>(() => ({}));
+/**
+ * The preview is fillable (#21). An admin deciding whether a form works needs
+ * to use it, not look at it: a choice list only shows it is unusable once you
+ * try to pick something. Nothing here is ever saved, and nothing says so,
+ * because a preview that saved a record would be the surprising thing.
+ */
+const previewValues = ref<Record<string, CheckValue>>({});
+
+function onPreviewChange(value: CheckValue): void {
+  previewValues.value = { ...previewValues.value, [value.fieldKey]: value };
+}
+
+function clearPreview(): void {
+  previewValues.value = {};
+}
+
+/**
+ * A preview answer belongs to the field it was typed into. Rename a key or
+ * change a type and the answer is for a field that no longer exists, so it is
+ * dropped rather than rendered into the wrong shape.
+ */
+watch(
+  () => fields.value.map((field) => `${field.key}:${field.type}`).join('|'),
+  (now, before) => {
+    const live = new Set(now.split('|'));
+    const previous = new Map(
+      (before ?? '')
+        .split('|')
+        .filter((entry) => entry !== '')
+        .map((entry) => entry.split(':') as [string, string]),
+    );
+
+    previewValues.value = Object.fromEntries(
+      Object.entries(previewValues.value).filter(([key]) => {
+        const type = previous.get(key);
+        return type !== undefined && live.has(`${key}:${type}`);
+      }),
+    );
+  },
+);
 
 async function load(): Promise<void> {
   loading.value = true;
@@ -543,12 +581,19 @@ const typeLabels: Record<FieldType, string> = {
       <section class="space-y-4">
         <div class="card p-4">
           <h2 class="text-lg font-semibold">Live preview</h2>
-          <p class="text-text-secondary mt-1 text-sm">
-            Exactly what a worker sees on their phone. No value is ever coloured or flagged.
-          </p>
+          <p class="text-text-secondary mt-1 text-sm">Exactly what a worker sees on their phone.</p>
           <div class="mt-4">
-            <DynamicForm :schema="schema" :values="emptyValues" readonly />
+            <DynamicForm :schema="schema" :values="previewValues" @change="onPreviewChange" />
           </div>
+
+          <button
+            v-if="Object.keys(previewValues).length > 0"
+            type="button"
+            class="btn border-border-default mt-4 border"
+            @click="clearPreview"
+          >
+            Clear the preview
+          </button>
         </div>
 
         <div class="card space-y-3 p-4">

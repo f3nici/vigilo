@@ -14,7 +14,9 @@ import RichText from '@/components/RichText.vue';
  *
  * One renderer, used by the worker recording a check and by the admin's live
  * preview in the field builder. The admin sees exactly what a worker will,
- * because it is the same component, not a mock-up that drifts.
+ * because it is the same component, not a mock-up that drifts, and the preview
+ * fills in the same way too: what the builder holds is thrown away rather than
+ * the form being made inert.
  *
  * **No value is ever coloured, flagged or annotated.** There is no code here
  * that could, and there is nothing in the schema to drive it if there were
@@ -23,8 +25,6 @@ import RichText from '@/components/RichText.vue';
 const props = defineProps<{
   schema: TemplateSchema;
   values: Record<string, CheckValue>;
-  /** The preview in the builder is inert: it shows the form, it takes nothing. */
-  readonly?: boolean;
 }>();
 
 const emit = defineEmits<{ change: [value: CheckValue] }>();
@@ -183,7 +183,7 @@ function removeTime(key: string, index: number): void {
         <RichText :source="field.body" />
       </section>
 
-      <fieldset v-else class="space-y-2" :disabled="readonly">
+      <fieldset v-else class="space-y-2">
         <legend class="field-label">
           {{ field.label }}
           <span v-if="field.required" class="text-state-missed" aria-label="required">*</span>
@@ -312,10 +312,6 @@ function removeTime(key: string, index: number): void {
               Add this time
             </button>
           </div>
-
-          <p v-if="timeList(field.key).length === 0" class="text-text-secondary text-sm">
-            Add each one as it happens.
-          </p>
         </div>
 
         <textarea

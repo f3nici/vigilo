@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { getClockSkewMs, getReady } from '@/api/client';
-import { getPlatform, isInstalled } from '@/platform';
+import { getPlatform, isInstalled, type UnlockMethod } from '@/platform';
 import { isSkewSignificant, type ReadyResponse } from '@vigilo/shared';
 
 /**
@@ -18,7 +18,10 @@ const capabilities = ref({
   installed: isInstalled(),
   durableStorage: false,
   storagePersisted: false,
-  biometricUnlock: false,
+  /** Whether the hardware can do it, which is not whether anybody has set it up. */
+  biometricAvailable: false,
+  /** What this device actually unlocks with, which is the question being asked. */
+  unlockMethod: null as UnlockMethod | null,
 });
 
 onMounted(async () => {
@@ -34,12 +37,29 @@ onMounted(async () => {
     installed: isInstalled(),
     durableStorage: platform.storage.isAvailable(),
     storagePersisted: await platform.storage.isPersisted(),
-    biometricUnlock: await platform.secureStore.isAvailable(),
+    biometricAvailable: await platform.secureStore.isAvailable(),
+    unlockMethod: await platform.secureStore.enrolledMethod(),
   };
 });
 
 function yesNo(value: boolean): string {
   return value ? 'Yes' : 'No';
+}
+
+/**
+ * The row used to read `isAvailable()`, so a device that merely has a
+ * fingerprint reader claimed biometric unlock was on. It says what is set up
+ * here, and separately whether the device could.
+ */
+function biometricState(): string {
+  if (capabilities.value.unlockMethod === 'biometric') return 'Set up';
+  return capabilities.value.biometricAvailable ? 'Available, not set up' : 'Not available';
+}
+
+function unlockState(): string {
+  if (capabilities.value.unlockMethod === 'biometric') return 'Biometric';
+  if (capabilities.value.unlockMethod === 'pin') return 'PIN';
+  return 'Not set up';
 }
 
 /** Replaced at build time from the app's package.json. */
@@ -117,10 +137,6 @@ const appVersion = __APP_VERSION__;
 
     <section class="card p-4">
       <h2 class="text-lg font-semibold">This device</h2>
-      <p class="text-text-secondary mt-1 text-sm">
-        Reported through the platform adapters. The same screen will read the same way on the native
-        builds.
-      </p>
       <dl class="mt-3 grid grid-cols-1 gap-x-10 gap-y-2 sm:grid-cols-2">
         <div class="flex justify-between gap-4">
           <dt class="text-text-secondary">Installed app</dt>
@@ -135,8 +151,12 @@ const appVersion = __APP_VERSION__;
           <dd>{{ yesNo(capabilities.storagePersisted) }}</dd>
         </div>
         <div class="flex justify-between gap-4">
+          <dt class="text-text-secondary">Unlock on this device</dt>
+          <dd>{{ unlockState() }}</dd>
+        </div>
+        <div class="flex justify-between gap-4">
           <dt class="text-text-secondary">Biometric unlock</dt>
-          <dd>{{ yesNo(capabilities.biometricUnlock) }}</dd>
+          <dd>{{ biometricState() }}</dd>
         </div>
       </dl>
     </section>

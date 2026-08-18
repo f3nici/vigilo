@@ -8,8 +8,10 @@ import {
   needsMissReason,
   type CheckSchedule,
   type CheckWindow,
+  type MissedReasonCode,
 } from '@vigilo/shared';
 import WindowRow from '@/components/WindowRow.vue';
+import BulkMissReason from '@/components/BulkMissReason.vue';
 import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
@@ -29,6 +31,10 @@ const session = useSessionStore();
 
 const windows = ref<CheckWindow[]>([]);
 const schedules = ref<CheckSchedule[]>([]);
+const reasonCodes = ref<MissedReasonCode[]>([]);
+const outstanding = ref<CheckWindow[]>([]);
+const bulkOpen = ref(false);
+const bulkLoading = ref(false);
 const timeZone = ref(session.timeZone);
 const date = ref(localDateOf(new Date(), session.timeZone));
 const loading = ref(true);
@@ -65,6 +71,45 @@ async function load(): Promise<void> {
 }
 
 onMounted(load);
+
+/** How far back an "answer them all" gathers. A month of a form left on. */
+const BULK_LOOKBACK_DAYS = 30;
+
+/**
+ * Everything this participant still owes a reason for, not just today's (#19).
+ *
+ * A check form switched on by mistake is usually noticed days later, and by
+ * then the misses are spread over every day since. Answering them from the day
+ * navigator means finding each day first, so the bulk panel goes and gets them.
+ */
+async function openBulk(): Promise<void> {
+  bulkLoading.value = true;
+  error.value = '';
+  try {
+    const [result, codes] = await Promise.all([
+      api.listWindows(props.participantId, {
+        from: addDays(date.value, -BULK_LOOKBACK_DAYS),
+        to: date.value,
+      }),
+      api.listReasonCodes(),
+    ]);
+    outstanding.value = result.windows
+      .filter((window) => needsMissReason(window.status, window.missReason !== null))
+      .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+    reasonCodes.value = codes;
+    bulkOpen.value = true;
+  } catch (err) {
+    error.value =
+      err instanceof ApiRequestError ? err.message : 'Could not load the missed checks.';
+  } finally {
+    bulkLoading.value = false;
+  }
+}
+
+async function afterBulk(): Promise<void> {
+  bulkOpen.value = false;
+  await load();
+}
 
 function shiftDay(by: number): void {
   date.value = addDays(date.value, by);
@@ -129,11 +174,31 @@ function shiftDay(by: number): void {
     <p v-else-if="windows.length === 0" class="text-text-secondary">No windows on this day.</p>
 
     <template v-else>
+      <BulkMissReason
+        v-if="bulkOpen"
+        :windows="outstanding"
+        :reason-codes="reasonCodes"
+        :time-zone="timeZone"
+        @done="afterBulk"
+        @cancel="bulkOpen = false"
+      />
+
       <div v-if="unresolved.length > 0" class="space-y-2">
-        <p class="text-state-missed font-semibold">
-          {{ unresolved.length }} missed
-          {{ unresolved.length === 1 ? 'check needs' : 'checks need' }} a reason
-        </p>
+        <div class="flex flex-wrap items-center gap-3">
+          <p class="text-state-missed font-semibold">
+            {{ unresolved.length }} missed
+            {{ unresolved.length === 1 ? 'check needs' : 'checks need' }} a reason
+          </p>
+          <button
+            v-if="!bulkOpen"
+            type="button"
+            class="btn border-border-default ml-auto border text-sm"
+            :disabled="bulkLoading"
+            @click="openBulk"
+          >
+            {{ bulkLoading ? 'Loading…' : 'Answer several at once' }}
+          </button>
+        </div>
         <WindowRow
           v-for="window in unresolved"
           :key="window.id"
