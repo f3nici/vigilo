@@ -282,6 +282,35 @@ describe('accounts with an outstanding requirement', () => {
     expect(res.body.error.code).toBe('validation_failed');
   });
 
+  /**
+   * The message a person reads, not the one a developer would (#23).
+   *
+   * "password: String must contain at least 1 character(s)" was what somebody
+   * got for leaving the box empty. The per-field list is translated too, so a
+   * form can mark the field and say the same sentence beside it.
+   */
+  it('says what is wrong in words somebody can act on', async () => {
+    const res = await request(h.app)
+      .post('/api/v1/auth/login')
+      .send({ email: 'ana@example.com', password: '' });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('validation_failed');
+    expect(res.body.error.message).toBe('Password is required.');
+    expect(res.body.error.details.issues).toEqual([
+      { path: 'password', message: 'Password is required.' },
+    ]);
+  });
+
+  it('keeps a message somebody wrote for the user', async () => {
+    const res = await request(h.app)
+      .post('/api/v1/auth/login')
+      .send({ email: 'not-an-email', password: 'a real password' });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error.message).toBe('Enter a valid email address.');
+  });
+
   it('signs every other session out after a password change', async () => {
     const worker = await seedUser(h.ownerDb, h.keyRing, { role: 'worker' });
     const first = await signIn(h, worker);

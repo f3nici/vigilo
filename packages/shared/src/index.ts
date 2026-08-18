@@ -31,4 +31,5 @@ export * from './templates.js';
 export * from './time.js';
 export * from './timeline.js';
 export * from './timezone.js';
+export * from './validation.js';
 export * from './windows.js';

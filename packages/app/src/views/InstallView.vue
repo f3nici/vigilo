@@ -100,7 +100,10 @@ async function setUpBiometric(): Promise<void> {
     }
     step.value = 'done';
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'That did not work.';
+    // Whatever the authenticator threw is for the console, not for somebody
+    // standing at a front door trying to set their phone up (#23).
+    console.error('biometric enrolment', err);
+    error.value = 'This device could not set that up. Set a PIN instead.';
   } finally {
     busy.value = false;
   }

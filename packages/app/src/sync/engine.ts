@@ -290,10 +290,22 @@ function permanent(error: unknown): boolean {
   );
 }
 
+/**
+ * What went wrong, in the words the sync panel shows a worker (#23).
+ *
+ * An `ApiRequestError` carries the server's own sentence, which is already
+ * written for a person. Anything else is a transport or a bug, and
+ * "TypeError: Failed to fetch" in a list of records the server would not
+ * accept tells a support worker nothing they can act on, so the real text goes
+ * to the console and the panel gets a sentence.
+ */
 function describe(error: unknown): string {
   if (error instanceof ApiRequestError) return error.message;
-  if (error instanceof Error) return error.message;
-  return String(error);
+  // No signal is a fact about the house, not a fault, so it is not logged as
+  // one either (doc 06 §7).
+  if (offline(error)) return 'This device had no signal. It will try again.';
+  console.error('sync', error);
+  return 'This device could not send it. It will try again.';
 }
 
 /**
