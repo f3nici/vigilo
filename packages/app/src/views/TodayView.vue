@@ -7,14 +7,16 @@ import {
   windowSortRank,
   type CheckWindow,
   type MedicationDose,
+  type MissedReasonCode,
   type ParticipantSummary,
 } from '@vigilo/shared';
 import WindowRow from '@/components/WindowRow.vue';
+import BulkMissReason from '@/components/BulkMissReason.vue';
 import DoseRow from '@/components/DoseRow.vue';
 import DoseSignOff from '@/components/DoseSignOff.vue';
 import FormError from '@/components/FormError.vue';
 import { ApiRequestError } from '@/api/client';
-import { readDueDoses, readToday } from '@/lib/records';
+import { readDueDoses, readReasonCodes, readToday } from '@/lib/records';
 import { useOfflineStore } from '@/stores/offline';
 import { useSessionStore } from '@/stores/session';
 
@@ -36,6 +38,8 @@ const windows = ref<CheckWindow[]>([]);
 const doses = ref<MedicationDose[]>([]);
 const signingOff = ref<MedicationDose | null>(null);
 const participants = ref<ParticipantSummary[]>([]);
+const reasonCodes = ref<MissedReasonCode[]>([]);
+const bulkOpen = ref(false);
 const timeZone = ref(session.timeZone);
 const loading = ref(true);
 const error = ref('');
@@ -100,6 +104,7 @@ async function load(): Promise<void> {
     timeZone.value = today.timeZone;
     participants.value = today.participants;
     doses.value = (await readDueDoses()).doses;
+    reasonCodes.value = await readReasonCodes();
   } catch (err) {
     error.value = err instanceof ApiRequestError ? err.message : 'Could not load today.';
   } finally {
@@ -140,6 +145,17 @@ const dosesOverdue = computed(() => groupDoses((dose) => dose.status === 'missed
 const dosesDue = computed(() => groupDoses((dose) => dose.status === 'pending'));
 
 const anyDoses = computed(() => dosesOverdue.value.length + dosesDue.value.length > 0);
+
+/**
+ * A form left switched on leaves a run of missed windows behind it, all with
+ * the same answer (#19). One reason for the lot beats forty taps, and it stays
+ * out of the way until there is more than one to answer.
+ */
+async function afterBulkReason(): Promise<void> {
+  bulkOpen.value = false;
+  await load();
+  void offline.sync();
+}
 
 async function afterSignOff(): Promise<void> {
   signingOff.value = null;
@@ -213,10 +229,31 @@ const today = computed(() =>
       </section>
 
       <section v-if="needsAttention.length > 0" class="space-y-2">
-        <h2 class="text-state-missed text-lg font-semibold">Needs attention</h2>
+        <div class="flex flex-wrap items-center gap-3">
+          <h2 class="text-state-missed text-lg font-semibold">Needs attention</h2>
+          <button
+            v-if="needsAttention.length > 1 && !bulkOpen"
+            type="button"
+            class="btn border-border-default ml-auto border text-sm"
+            @click="bulkOpen = true"
+          >
+            Answer all {{ needsAttention.length }} with one reason
+          </button>
+        </div>
         <p class="text-text-secondary text-sm">
           These closed without a check. Each one needs a reason before it clears.
         </p>
+
+        <BulkMissReason
+          v-if="bulkOpen"
+          :windows="needsAttention"
+          :reason-codes="reasonCodes"
+          :time-zone="timeZone"
+          :names="names"
+          @done="afterBulkReason"
+          @cancel="bulkOpen = false"
+        />
+
         <WindowRow
           v-for="window in needsAttention"
           :key="window.id"

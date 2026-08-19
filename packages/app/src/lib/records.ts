@@ -249,15 +249,41 @@ export async function recordMissReason(input: {
     return { detail: await api.putMissReason(input.window.id, input.request), queued: false };
   }
 
+  const { queued } = await recordMissReasonFor({
+    windowId: input.window.id,
+    participantId: input.window.participantId,
+    request: input.request,
+  });
+
+  return { detail: input.window, queued };
+}
+
+/**
+ * The same write, for a screen holding a window as a summary rather than a
+ * detail. Answering a run of missed checks at once (#19) has a list and no
+ * form open, so there is no `WindowDetail` to hand over and none is needed:
+ * the write only ever wanted the two ids.
+ */
+export async function recordMissReasonFor(input: {
+  windowId: string;
+  participantId: string;
+  request: PutMissReasonRequest;
+}): Promise<{ queued: boolean }> {
+  const db = local();
+  if (!db) {
+    await api.putMissReason(input.windowId, input.request);
+    return { queued: false };
+  }
+
   await store().enqueue({
     opId: uuidv7(),
     kind: 'miss_reason.put',
-    participantId: input.window.participantId,
-    windowId: input.window.id,
+    participantId: input.participantId,
+    windowId: input.windowId,
     payload: { ...input.request, id: uuidv7() },
   });
 
-  return { detail: input.window, queued: true };
+  return { queued: true };
 }
 
 /* ------------------------------------------------------------ participants */

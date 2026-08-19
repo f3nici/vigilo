@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   createParticipantRequestSchema,
+  describeIssues,
+  issuesByField,
   type CreateParticipantRequest,
   type UpdateParticipantRequest,
 } from '@vigilo/shared';
@@ -88,13 +90,8 @@ async function submit(): Promise<void> {
 
   const parsed = createParticipantRequestSchema.safeParse(payload());
   if (!parsed.success) {
-    for (const issue of parsed.error.issues) {
-      const key = issue.path[0];
-      if (typeof key === 'string' && !fieldErrors.value[key]) {
-        fieldErrors.value[key] = issue.message;
-      }
-    }
-    error.value = 'Check the highlighted fields.';
+    fieldErrors.value = issuesByField(parsed.error.issues);
+    error.value = describeIssues(parsed.error.issues);
     return;
   }
 

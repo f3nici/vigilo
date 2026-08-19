@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import type { MeResponse, Principal } from '@vigilo/shared';
 import { isInstalled } from '@/platform';
+import { forgetQuickSignIn } from '@/lib/signin-options';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
 
@@ -163,6 +164,10 @@ export const useSessionStore = defineStore('session', () => {
       scope.value = null;
       org.value = null;
       forget();
+      // Signing out is the one thing that has to leave nothing behind on a
+      // shared phone, and a quick sign-in left here would be a way straight
+      // back into the account somebody just left (#24).
+      await forgetQuickSignIn();
     }
   }
 

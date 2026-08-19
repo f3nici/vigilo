@@ -11,6 +11,8 @@
  * WebAuthn, Web Push or Capacitor directly.
  */
 
+import type { PasskeyAuthentication, PasskeyRegistration } from '@vigilo/shared';
+
 /** Thrown by an adapter method whose implementation lands in a later phase. */
 export class PlatformNotImplementedError extends Error {
   constructor(what: string, phase: string) {
@@ -148,6 +150,40 @@ export interface SecureStore {
   unseal(sealed: string): Promise<string>;
 }
 
+/**
+ * What this browser can do with a passkey.
+ *
+ * Two separate answers, because they lead to different offers: a laptop with
+ * no fingerprint reader can still use a passkey from a phone, and a device
+ * with a platform authenticator is the one to offer biometric unlock on.
+ */
+export type PasskeyAvailability = {
+  supported: boolean;
+  platformAuthenticator: boolean;
+};
+
+/**
+ * The two WebAuthn ceremonies, for signing in rather than for unlocking (#24).
+ *
+ * Separate from `SecureStore` on purpose. That one derives a key that never
+ * leaves the device and the server knows nothing about; this one runs a
+ * challenge the server issued and verifies. Same API underneath, two different
+ * jobs, and merging them would mean a screen could not tell which it was
+ * asking for.
+ *
+ * Both return null when the person dismisses the prompt. Thinking better of it
+ * is not a fault, and a screen that treats it as one shows an error to
+ * somebody who did exactly what they meant to.
+ */
+export interface Passkeys {
+  availability(): Promise<PasskeyAvailability>;
+
+  /** Options as the server issued them, JSON in and JSON out. */
+  create(options: Record<string, unknown>): Promise<PasskeyRegistration | null>;
+
+  get(options: Record<string, unknown>): Promise<PasskeyAuthentication | null>;
+}
+
 /*
  * There is no push adapter. Notifications came out in this phase (D88), and
  * with no roster there was no honest way to decide who was on shift. The
@@ -158,4 +194,5 @@ export interface PlatformAdapters {
   readonly name: 'web' | 'native';
   readonly storage: Storage;
   readonly secureStore: SecureStore;
+  readonly passkeys: Passkeys;
 }

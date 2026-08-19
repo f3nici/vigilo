@@ -73,6 +73,12 @@ describe('the self-access route list', () => {
     }
   });
 
+  it('lets them set up their own way of signing in', () => {
+    // The nav offers it, so the guard has to allow it: a link that bounces
+    // somebody back to My day is worse than no link (#24).
+    expect(SELF_ACCESS_ROUTES.has('sign-in-options')).toBe(true);
+  });
+
   it('still lets them resolve a forced password change', () => {
     // Otherwise the guard would bounce them off the one screen that clears the
     // requirement stopping them reaching anything else.

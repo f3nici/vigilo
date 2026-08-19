@@ -4,6 +4,7 @@ import { RouterLink, useRouter } from 'vue-router';
 import {
   canManageParticipants,
   compareParticipants,
+  describeIssues,
   describeOutstanding,
   emptyOutstanding,
   matchesParticipantSearch,
@@ -106,7 +107,7 @@ onMounted(() => {
 async function lookup(): Promise<void> {
   const parsed = ndisNumberSchema.safeParse(ndis.value);
   if (!parsed.success) {
-    lookupResult.value = parsed.error.issues[0]?.message ?? 'Check that number.';
+    lookupResult.value = describeIssues(parsed.error.issues);
     return;
   }
 

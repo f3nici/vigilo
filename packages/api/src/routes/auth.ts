@@ -1,9 +1,15 @@
 import { Router, type CookieOptions, type Request, type Response } from 'express';
 import {
   changePasswordRequestSchema,
+  enrolQuickSignInRequestSchema,
   loginRequestSchema,
+  passkeyLoginRequestSchema,
+  platformSchema,
   recoveryCodeRequestSchema,
   refreshRequestSchema,
+  registerPasskeyRequestSchema,
+  renamePasskeyRequestSchema,
+  quickSignInRequestSchema,
   totpChallengeRequestSchema,
   type LoginResponse,
   type MeResponse,
@@ -30,6 +36,22 @@ import {
   type AuthContext,
   type UserRow,
 } from '../services/auth.js';
+import {
+  beginPasskeyAuthentication,
+  beginPasskeyRegistration,
+  completePasskeyAuthentication,
+  finishPasskeyRegistration,
+  listPasskeys,
+  renamePasskey,
+  revokePasskey,
+} from '../services/passkeys.js';
+import {
+  enrolQuickSignIn,
+  listQuickSignIns,
+  redeemQuickSignIn,
+  revokeAllQuickSignIns,
+  revokeQuickSignIn,
+} from '../services/quicksignin.js';
 import { getOrgSettings } from '../services/org.js';
 import { resolveScopeFor } from '../services/scope.js';
 import { recordAudit } from '../services/audit.js';
@@ -192,8 +214,12 @@ export function authRoutes(db: Database, config: Config, keyRing: KeyRing): Rout
 
       await changePassword(ctx, principal.user, currentPassword, newPassword, req.auditActor);
 
-      // Every other session for this user is now stale.
+      // Every other session for this user is now stale, and so is every
+      // device holding a quick sign-in: somebody changing their password
+      // because they think it is known must not leave a phone still able to
+      // walk straight in (#24).
       await revokeAllForUser(db, principal.user.id);
+      await revokeAllQuickSignIns(db, principal.user.id);
       res.clearCookie(SESSION_COOKIE, { path: '/' });
       res.clearCookie(CSRF_COOKIE, { path: '/' });
 
@@ -232,6 +258,181 @@ export function authRoutes(db: Database, config: Config, keyRing: KeyRing): Rout
 
       await confirmTotpEnrolment(ctx, principal.user, code, req.auditActor);
       res.status(204).end();
+    }),
+  );
+
+  /* ------------------------------------------------------------- passkeys */
+
+  /**
+   * Passkeys (#24).
+   *
+   * Registration needs a session, because a passkey is added to an account
+   * that already exists and there is no self-service account creation here.
+   * Sign-in does not, obviously, and it is discoverable: the browser is never
+   * handed a list of credential ids for an email address, because that would
+   * answer "does this person have an account" to anybody who asked.
+   */
+  router.post(
+    '/passkeys/options',
+    requireAuth(),
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      res.json({ options: await beginPasskeyRegistration(ctx, principal.user) });
+    }),
+  );
+
+  router.post(
+    '/passkeys',
+    requireAuth(),
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      const { name, credential } = registerPasskeyRequestSchema.parse(req.body);
+      const passkey = await finishPasskeyRegistration(
+        ctx,
+        principal.user,
+        credential,
+        name,
+        req.auditActor,
+      );
+      res.status(201).json({ passkey });
+    }),
+  );
+
+  router.get(
+    '/passkeys',
+    requireAuth(),
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      res.json({ passkeys: await listPasskeys(db, principal.user.id) });
+    }),
+  );
+
+  router.patch(
+    '/passkeys/:id',
+    requireAuth(),
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+      const { name } = renamePasskeyRequestSchema.parse(req.body);
+      res.json({ passkey: await renamePasskey(db, principal.user.id, id, name) });
+    }),
+  );
+
+  router.delete(
+    '/passkeys/:id',
+    requireAuth(),
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+      await revokePasskey(db, principal.user.id, id, req.auditActor);
+      res.status(204).end();
+    }),
+  );
+
+  router.post(
+    '/passkey/options',
+    asyncHandler(async (req, res) => {
+      const query = z
+        .object({
+          deviceId: z.string().uuid().optional(),
+          platform: platformSchema.optional(),
+        })
+        .parse(req.body ?? {});
+
+      res.json({ options: await beginPasskeyAuthentication(ctx, query) });
+    }),
+  );
+
+  /**
+   * Signing in with a passkey.
+   *
+   * No TOTP step. The ceremony only completes after the authenticator has
+   * verified the person, and the server checks that flag rather than trusting
+   * that it asked for it, so this is possession and verification together
+   * (doc 01 §10). A role that must enrol in TOTP still must: the requirement
+   * is enforced on every other route by the middleware, not here.
+   */
+  router.post(
+    '/passkey/login',
+    asyncHandler(async (req, res) => {
+      const request = passkeyLoginRequestSchema.parse(req.body);
+      const { user } = await completePasskeyAuthentication(ctx, request.credential, req.auditActor);
+
+      if (request.deviceId && request.platform) {
+        await registerDevice(ctx, user.id, request.deviceId, request.platform);
+        res.json(await completeAppLogin(ctx, user, request.deviceId));
+        return;
+      }
+
+      res.json(await completeBrowserLogin(ctx, res, req, user));
+    }),
+  );
+
+  /* -------------------------------------------------------- quick sign-in */
+
+  /**
+   * The fingerprint and the PIN (#24).
+   *
+   * Not a factor (doc 01 §10). The device holds a secret Vigilo generated,
+   * sealed behind the phone's own verification, and this hands back the
+   * session the account already earned by signing in properly. Which is why
+   * enrolling needs a live session and redeeming does not.
+   */
+  router.post(
+    '/quick-sign-in/enrol',
+    requireAuth(),
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      const { method, label } = enrolQuickSignInRequestSchema.parse(req.body);
+
+      res.status(201).json({
+        credential: await enrolQuickSignIn(
+          ctx,
+          principal.user,
+          { method, label, deviceId: req.auditActor.deviceId },
+          req.auditActor,
+        ),
+      });
+    }),
+  );
+
+  router.get(
+    '/quick-sign-in',
+    requireAuth(),
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      res.json({ devices: await listQuickSignIns(db, principal.user.id) });
+    }),
+  );
+
+  router.delete(
+    '/quick-sign-in/:id',
+    requireAuth(),
+    asyncHandler(async (req, res) => {
+      const principal = currentPrincipal(req);
+      const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+      await revokeQuickSignIn(db, principal.user.id, id, req.auditActor);
+      res.status(204).end();
+    }),
+  );
+
+  router.post(
+    '/quick-sign-in',
+    asyncHandler(async (req, res) => {
+      const request = quickSignInRequestSchema.parse(req.body);
+      const user = await redeemQuickSignIn(
+        ctx,
+        { credentialId: request.credentialId, secret: request.secret },
+        req.auditActor,
+      );
+
+      if (request.deviceId && request.platform) {
+        await registerDevice(ctx, user.id, request.deviceId, request.platform);
+        res.json(await completeAppLogin(ctx, user, request.deviceId));
+        return;
+      }
+
+      res.json(await completeBrowserLogin(ctx, res, req, user));
     }),
   );
 
