@@ -10,7 +10,7 @@ import { applyConfiguredTimeZone } from './services/org.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const logger = createLogger(config.LOG_LEVEL);
+  const logger = createLogger({ level: config.LOG_LEVEL, format: config.LOG_FORMAT });
 
   // Fail before listening if the master key is wrong, rather than on the first
   // request that needs to decrypt something.

@@ -1,7 +1,7 @@
 import express, { type Express } from 'express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
-import { pinoHttp } from 'pino-http';
+import { pinoHttp, type Options } from 'pino-http';
 import { randomUUID } from 'node:crypto';
 import type { Config } from './config.js';
 import type { Logger } from './logger.js';
@@ -57,6 +57,79 @@ import {
   restrictSelfAccess,
 } from './middleware/principal.js';
 
+/**
+ * Health and readiness, which docker polls and nobody wants to read about.
+ *
+ * Reads `originalUrl` first. Express rewrites `req.url` to the path relative to
+ * the mount while a router is handling the request, so by the time pino-http
+ * asks what level to log at, a request to `/api/health` can be sitting there as
+ * `/health`. The logged path looked right regardless, because that comes from a
+ * binding taken before routing, which is what made this look like the matcher
+ * was fine when it was quietly never matching.
+ */
+function isProbe(req: { originalUrl?: string | undefined; url?: string | undefined }): boolean {
+  const raw = req.originalUrl ?? req.url;
+  if (raw === undefined) return false;
+  const path = raw.split('?')[0];
+  return path === '/api/health' || path === '/api/ready';
+}
+
+/**
+ * What a request log is allowed to say (doc 02 §7).
+ *
+ * The default serialisers put every request and response header on every line,
+ * which was helmet's nine constants repeated a few times a second and about
+ * nine tenths of the volume. Method, path, status, duration and the request id
+ * are what anybody actually reads, and they are also the four things that stay
+ * safe to log: a header set can pick up a token the redact list has not been
+ * taught about yet, and a URL cannot.
+ *
+ * The level says what happened rather than everything being info:
+ *
+ * - **error** for a 5xx or a thrown error, which is ours
+ * - **warn** for a 4xx, which is usually the caller's
+ * - **debug** for a healthy probe, so `docker compose logs` is not one
+ *   `/api/health` every ten seconds. A probe that fails is not a probe anybody
+ *   should have to ask for, so it keeps the level its status earns.
+ * - **info** for everything else
+ */
+export function httpLogging(logger: Logger): Options {
+  return {
+    logger,
+
+    genReqId: (req, res) => {
+      const existing = req.headers['x-request-id'];
+      const id = typeof existing === 'string' && existing ? existing : randomUUID();
+      res.setHeader('X-Request-Id', id);
+      return id;
+    },
+
+    serializers: {
+      req: (req: {
+        id?: unknown;
+        method?: string | undefined;
+        originalUrl?: string | undefined;
+        url?: string | undefined;
+      }) => ({
+        id: req.id,
+        method: req.method,
+        url: req.originalUrl ?? req.url,
+      }),
+      res: (res: { statusCode?: number }) => ({ statusCode: res.statusCode }),
+    },
+
+    customLogLevel: (req, res, err) => {
+      if (err !== undefined || res.statusCode >= 500) return 'error';
+      if (res.statusCode >= 400) return 'warn';
+      if (isProbe(req)) return 'debug';
+      return 'info';
+    },
+
+    customSuccessMessage: (req, res) => `${req.method ?? ''} ${res.statusCode}`,
+    customErrorMessage: (req, res) => `${req.method ?? ''} ${res.statusCode}`,
+  };
+}
+
 export function createApp(config: Config, logger: Logger, db: Database, keyRing: KeyRing): Express {
   const app = express();
   const store = createFileStore(config.ATTACHMENT_DIR);
@@ -68,17 +141,7 @@ export function createApp(config: Config, logger: Logger, db: Database, keyRing:
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
 
-  app.use(
-    pinoHttp({
-      logger,
-      genReqId: (req, res) => {
-        const existing = req.headers['x-request-id'];
-        const id = typeof existing === 'string' && existing ? existing : randomUUID();
-        res.setHeader('X-Request-Id', id);
-        return id;
-      },
-    }),
-  );
+  app.use(pinoHttp(httpLogging(logger)));
 
   /**
    * Capacitor apps sign in from https://localhost. Allowing that origin and
