@@ -113,7 +113,14 @@ export const useOfflineStore = defineStore('offline', () => {
 
   async function enrolBiometric(userId: string, userName: string): Promise<boolean> {
     if (!(await secureStore.enrolBiometric(userId, userName))) return false;
-    // Enrolling does not produce the key; the first unlock does.
+    // Enrolment now returns only once it holds the key, so asking for another
+    // assertion here would be a second fingerprint prompt for nothing. It can
+    // still arrive locked from a platform that enrols without deriving, and
+    // that is what the unlock is for.
+    if (secureStore.isUnlocked()) {
+      await afterUnlock();
+      return true;
+    }
     return unlockWithBiometric();
   }
 
