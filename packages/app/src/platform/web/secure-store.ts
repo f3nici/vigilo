@@ -85,6 +85,36 @@ function bytes(value: ArrayBuffer | Uint8Array): Uint8Array {
   return value instanceof Uint8Array ? value : new Uint8Array(value);
 }
 
+/** The PRF bytes, from either ceremony, or undefined where none came back. */
+function prfOutput(credential: PublicKeyCredential): ArrayBuffer | undefined {
+  const results = credential.getClientExtensionResults() as AuthenticationExtensionsClientOutputs &
+    PrfExtensionResults;
+  return results.prf?.results?.first;
+}
+
+/**
+ * Cancellation, or a fault worth saying out loud.
+ *
+ * The same split `ceremonyFailed` makes in `passkeys.ts`, for the same reason:
+ * false here means "no biometric, offer the PIN", which is the right answer to
+ * somebody dismissing the prompt and the wrong answer to a browser that cannot
+ * run the ceremony at all. Both used to arrive as a bare `catch { return false }`,
+ * so a real fault was a button that quietly took its own offer away.
+ *
+ * This one returns rather than throws, because unlocking has a working second
+ * route. The screen falls back to the PIN either way; the console gets the
+ * detail so the next person to look has something to go on.
+ */
+function unlockCeremonyFailed(ceremony: 'create' | 'get', error: unknown): false {
+  const name = error instanceof DOMException ? error.name : '';
+
+  if (name !== 'NotAllowedError' && name !== 'AbortError') {
+    console.error(`biometric unlock ${ceremony} failed`, error);
+  }
+
+  return false;
+}
+
 export class WebSecureStore implements SecureStore {
   /** Held in memory for the session only. Never persisted, never exported. */
   #key: CryptoKey | null = null;
@@ -127,12 +157,24 @@ export class WebSecureStore implements SecureStore {
    * PRF support cannot be detected in advance: an authenticator can register
    * happily and then report no PRF results. So enrolment tries, and a false
    * here is the install flow's signal to offer the PIN instead.
+   *
+   * The one place it must not be tested is registration. Android's Google
+   * Password Manager writes the passkey, reports no `prf` at all on the way
+   * back, and then answers PRF perfectly on the next assertion. Reading the
+   * creation results as the verdict called every Android device incapable
+   * after putting a real passkey in the person's keychain, which is what the
+   * fingerprint button did on a Pixel: a Google prompt, then the offer gone.
+   *
+   * So registration only registers. `first` is asked for here because a
+   * browser that does answer saves a second prompt, and everything else waits
+   * for the assertion, where the answer is trustworthy.
    */
   async enrolBiometric(userId: string, userName: string): Promise<boolean> {
     if (!(await this.isAvailable())) return false;
 
+    let credential: PublicKeyCredential | null;
     try {
-      const credential = (await navigator.credentials.create({
+      credential = (await navigator.credentials.create({
         publicKey: {
           challenge: crypto.getRandomValues(new Uint8Array(32)),
           rp: { name: 'Vigilo', id: window.location.hostname },
@@ -150,23 +192,80 @@ export class WebSecureStore implements SecureStore {
             residentKey: 'required',
             userVerification: 'required',
           },
-          extensions: { prf: {} } as AuthenticationExtensionsClientInputs,
+          extensions: {
+            prf: { eval: { first: PRF_SALT } },
+          } as AuthenticationExtensionsClientInputs,
           timeout: 60_000,
         },
       })) as PublicKeyCredential | null;
-
-      if (!credential) return false;
-
-      const results =
-        credential.getClientExtensionResults() as AuthenticationExtensionsClientOutputs &
-          PrfExtensionResults;
-      if (results.prf === undefined) return false;
-
-      await put(CREDENTIAL_KEY, toBase64(credential.rawId));
-      return true;
-    } catch {
-      return false;
+    } catch (error) {
+      return unlockCeremonyFailed('create', error);
     }
+
+    if (!credential) return false;
+
+    const credentialId = toBase64(credential.rawId);
+    const first = prfOutput(credential);
+
+    // Where the browser answered, the key is already here and the person was
+    // prompted once.
+    if (first !== undefined) {
+      await this.#adopt(first);
+      await put(CREDENTIAL_KEY, credentialId);
+      return true;
+    }
+
+    // Where it did not, ask for an assertion now. This is the second prompt on
+    // Android, and it is the only honest test of whether the credential can
+    // produce a key at all.
+    await put(CREDENTIAL_KEY, credentialId);
+    if (await this.#deriveFrom(credentialId)) return true;
+
+    // It registered and cannot do PRF. Leaving the id behind would make
+    // `enrolledMethod` answer 'biometric' for a credential that unlocks
+    // nothing, so the offer would come back on the lock screen and fail there
+    // instead. Only this key is dropped: a PIN set up earlier is untouched.
+    await drop(CREDENTIAL_KEY);
+    return false;
+  }
+
+  /** Turns PRF output into the session key. The slice is the AES-256 length. */
+  async #adopt(first: ArrayBuffer): Promise<void> {
+    this.#key = await keyFromBytes(bytes(first).slice(0, 32));
+    this.#method = 'biometric';
+  }
+
+  /**
+   * One assertion against a known credential, which is where PRF answers.
+   *
+   * Shared by enrolment and unlock so there is one description of what a
+   * working biometric looks like, rather than two that can drift.
+   */
+  async #deriveFrom(credentialId: string): Promise<boolean> {
+    let assertion: PublicKeyCredential | null;
+    try {
+      assertion = (await navigator.credentials.get({
+        publicKey: {
+          challenge: crypto.getRandomValues(new Uint8Array(32)),
+          allowCredentials: [{ type: 'public-key', id: fromBase64(credentialId) }],
+          userVerification: 'required',
+          extensions: {
+            prf: { eval: { first: PRF_SALT } },
+          } as AuthenticationExtensionsClientInputs,
+          timeout: 60_000,
+        },
+      })) as PublicKeyCredential | null;
+    } catch (error) {
+      return unlockCeremonyFailed('get', error);
+    }
+
+    if (!assertion) return false;
+
+    const first = prfOutput(assertion);
+    if (first === undefined) return false;
+
+    await this.#adopt(first);
+    return true;
   }
 
   async enrolPin(pin: string): Promise<void> {
@@ -187,34 +286,7 @@ export class WebSecureStore implements SecureStore {
   async unlockWithBiometric(): Promise<boolean> {
     const credentialId = await read<string>(CREDENTIAL_KEY);
     if (credentialId === null) return false;
-
-    try {
-      const assertion = (await navigator.credentials.get({
-        publicKey: {
-          challenge: crypto.getRandomValues(new Uint8Array(32)),
-          allowCredentials: [{ type: 'public-key', id: fromBase64(credentialId) }],
-          userVerification: 'required',
-          extensions: {
-            prf: { eval: { first: PRF_SALT } },
-          } as AuthenticationExtensionsClientInputs,
-          timeout: 60_000,
-        },
-      })) as PublicKeyCredential | null;
-
-      if (!assertion) return false;
-
-      const results =
-        assertion.getClientExtensionResults() as AuthenticationExtensionsClientOutputs &
-          PrfExtensionResults;
-      const first = results.prf?.results?.first;
-      if (!first) return false;
-
-      this.#key = await keyFromBytes(bytes(first).slice(0, 32));
-      this.#method = 'biometric';
-      return true;
-    } catch {
-      return false;
-    }
+    return await this.#deriveFrom(credentialId);
   }
 
   async unlockWithPin(pin: string): Promise<boolean> {
