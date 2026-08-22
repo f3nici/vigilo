@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import VigiloMark from '@/components/VigiloMark.vue';
 import FormError from '@/components/FormError.vue';
 import { useSessionStore } from '@/stores/session';
-import { getPlatform } from '@/platform';
+import { getPlatform, PasskeyError } from '@/platform';
 import {
   localQuickSignIn,
   signInWithPasskey,
@@ -101,6 +101,8 @@ async function usePasskey(): Promise<void> {
 }
 
 function messageFor(err: unknown): string {
+  // A passkey ceremony that failed says what went wrong in its own words.
+  if (err instanceof PasskeyError) return err.message;
   if (err instanceof ApiRequestError) return err.message;
   return 'Could not reach the server. Check your connection and try again.';
 }
