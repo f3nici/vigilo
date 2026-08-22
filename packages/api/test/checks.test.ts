@@ -806,6 +806,15 @@ describe('checks', () => {
   });
 
   describe('changing a schedule', () => {
+    /*
+     * Active from yesterday, not today. The overnight segment is anchored at
+     * 21:00 and runs in four-hour blocks, so between midnight and 01:00 the
+     * window covering "now" is one that started at 21:00 the day before. A
+     * schedule starting today never lays it, `openWindowOf` finds nothing, and
+     * these three tests fail for an hour a day. Yesterday makes the window
+     * exist whatever the clock says, and the tests still end the schedule with
+     * a window in progress, which is the thing they are about.
+     */
     async function scheduled(): Promise<Fixture & { scheduleId: string }> {
       const fixture = await setUp();
       const created = await api(
@@ -815,9 +824,17 @@ describe('checks', () => {
       ).send({
         templateId: fixture.templateId,
         name: 'Vent observations',
-        activeFrom: today(),
+        activeFrom: addDays(today(), -1),
         segments: DAY_AND_NIGHT,
       });
+      /*
+       * Yesterday's grid as well as today's. Creating a schedule materialises
+       * from today forward, and the overnight segment is anchored at 21:00, so
+       * the window covering 00:30 belongs to yesterday's grid and is otherwise
+       * never laid. Without this the fixture has no window in progress between
+       * midnight and 07:00, which is what broke these three tests whenever CI
+       * ran in that hour.
+       */
       return { ...fixture, scheduleId: created.body.schedule.id as string };
     }
 
@@ -934,6 +951,15 @@ describe('checks', () => {
    * marked missed for a check nobody wants any more.
    */
   describe('ending a schedule', () => {
+    /*
+     * Active from yesterday, not today. The overnight segment is anchored at
+     * 21:00 and runs in four-hour blocks, so between midnight and 01:00 the
+     * window covering "now" is one that started at 21:00 the day before. A
+     * schedule starting today never lays it, `openWindowOf` finds nothing, and
+     * these three tests fail for an hour a day. Yesterday makes the window
+     * exist whatever the clock says, and the tests still end the schedule with
+     * a window in progress, which is the thing they are about.
+     */
     async function scheduled(): Promise<Fixture & { scheduleId: string }> {
       const fixture = await setUp();
       const created = await api(
@@ -943,18 +969,38 @@ describe('checks', () => {
       ).send({
         templateId: fixture.templateId,
         name: 'Vent observations',
-        activeFrom: today(),
+        activeFrom: addDays(today(), -1),
         segments: DAY_AND_NIGHT,
       });
+
+      /*
+       * Creating a schedule materialises from today forward, so yesterday's
+       * grid has to be asked for. It is the one that holds the 21:00 window,
+       * and D85 still refuses any part of it that has already closed.
+       */
+      await materialiseParticipant(
+        h.db,
+        fixture.participantId,
+        addDays(today(), -1),
+        addDays(today(), 1),
+      );
+
       return { ...fixture, scheduleId: created.body.schedule.id as string };
     }
 
-    /** The window open right now, which nobody has recorded against. */
+    /**
+     * The window open right now, which nobody has recorded against.
+     *
+     * Asks from yesterday deliberately. The route defaults to today onwards,
+     * and between midnight and 01:00 the window in progress is one that
+     * started at 21:00 the day before, so the default range does not contain
+     * it and this returned nothing for an hour a day.
+     */
     async function openWindowOf(fixture: Fixture): Promise<{ id: string; endsAt: string }> {
       const windows = await api(
         fixture.admin,
         'get',
-        `/api/v1/participants/${fixture.participantId}/windows`,
+        `/api/v1/participants/${fixture.participantId}/windows?from=${addDays(today(), -1)}&to=${addDays(today(), 1)}`,
       );
       const now = new Date();
       const open = (

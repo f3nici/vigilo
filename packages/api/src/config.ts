@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { assertTimeZone } from '@vigilo/shared';
+import { logFormats } from './logger.js';
 
 /**
  * Environment is parsed once at startup and fails loudly. A misconfigured
@@ -50,6 +51,12 @@ const envSchema = z
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
+
+    /**
+     * `json` for anything that ships logs somewhere (doc 02 §7), `pretty` for a
+     * person watching `docker compose logs -f`. Same records either way.
+     */
+    LOG_FORMAT: z.enum(logFormats).default('json'),
 
     /** Set by CI to the commit sha. Reported by /api/health as the build hash. */
     BUILD_HASH: z.string().default('dev'),

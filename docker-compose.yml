@@ -41,6 +41,7 @@ services:
       # Wraps the per-table data keys. Generate with: openssl rand -base64 32
       MASTER_KEY: '${MASTER_KEY:?set MASTER_KEY in .env, generate one with openssl rand -base64 32}'
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
       BUILD_HASH: ${BUILD_HASH:-local}
       # Every window, every dose and every "daily" calculation is decided in
       # this zone, and it is the only zone staff ever see. Applied on first run
