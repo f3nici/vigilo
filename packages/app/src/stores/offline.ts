@@ -308,14 +308,31 @@ export const useOfflineStore = defineStore('offline', () => {
     await refreshStatus();
   }
 
-  async function signOut(): Promise<void> {
+  /**
+   * Leaves nothing on this device: no records, and no way back into them.
+   *
+   * `lock()` was not enough. It drops the key from memory and leaves the
+   * enrolment in IndexedDB, so the PIN somebody set up still opened the app
+   * afterwards. That made "remove" on the signing-in screen a promise the
+   * product did not keep, and made the shared-phone case in `signOut` untrue.
+   *
+   * `wipe` pushes the outbox before it deletes anything, so this is safe to
+   * call on a device holding work the server has not seen.
+   */
+  async function forgetDevice(): Promise<void> {
     await wipe();
     await store.value?.close();
     store.value = null;
     engine.value = null;
-    secureStore.lock();
+    await secureStore.reset();
+    // Nothing enrolled is 'idle', not 'locked'. A locked app with no enrolment
+    // is an unlock screen with no way to answer it.
     state.value = 'idle';
     stopListening();
+  }
+
+  async function signOut(): Promise<void> {
+    await forgetDevice();
   }
 
   /* -------------------------------------------------------------- triggers */
@@ -404,6 +421,7 @@ export const useOfflineStore = defineStore('offline', () => {
     queuePhoto,
     flagged,
     wipe,
+    forgetDevice,
     signOut,
   };
 });

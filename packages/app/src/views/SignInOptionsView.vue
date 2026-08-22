@@ -198,6 +198,12 @@ async function removeDevice(device: QuickSignInSummary): Promise<void> {
     // takes the button off the sign-in screen.
     if (thisDevice.value?.credentialId === device.id) {
       await forgetQuickSignIn();
+      // And the enrolment with it. Retiring the server's row stopped the quick
+      // sign-in and left the PIN still opening the app on this device, which is
+      // not what "remove" says. This pushes the outbox first, then drops the
+      // records held here and the PIN or fingerprint that opened them. The
+      // password still signs in and the records come back on the next sync.
+      await offline.forgetDevice();
       thisDevice.value = null;
     }
     note.value = `${device.label} can no longer sign you in without your password.`;
@@ -362,7 +368,8 @@ function formatWhen(iso: string | null): string {
         <h2 class="text-lg font-semibold">Devices that can sign in quickly</h2>
         <p class="text-text-secondary text-sm">
           Remove one you no longer have. It stops working straight away, and the password still
-          works everywhere.
+          works everywhere. Removing the one you are on also clears the records held on it and the
+          PIN or fingerprint that opened them, so anything not yet sent is sent first.
         </p>
 
         <ul class="space-y-2">

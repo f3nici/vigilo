@@ -96,6 +96,18 @@ describe('the secure store', () => {
 
     expect(await store.isEnrolled()).toBe(false);
     expect(store.isUnlocked()).toBe(false);
+    expect(await store.enrolledMethod()).toBeNull();
+  });
+
+  it('will not open again with the PIN it was reset with', async () => {
+    // What `lock()` does not do, and the reason removing quick sign-in left
+    // the PIN still opening the app. Reset is what "remove this device" and
+    // signing out both have to reach for.
+    await store.enrolPin('123456');
+    await store.reset();
+
+    expect(await store.unlockWithPin('123456')).toBe(false);
+    expect(store.isUnlocked()).toBe(false);
   });
 
   it('stores a named secret sealed rather than in the clear', async () => {
