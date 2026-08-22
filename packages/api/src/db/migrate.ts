@@ -81,7 +81,7 @@ export async function provisionAppRole(
 
 /** `npm run migrate`, and what the API calls before it starts serving. */
 export async function migrateWithOwner(config: ReturnType<typeof loadConfig>): Promise<void> {
-  const logger = createLogger(config.LOG_LEVEL);
+  const logger = createLogger({ level: config.LOG_LEVEL, format: config.LOG_FORMAT });
   const { db, sql: client } = createDatabase(config.migrateDatabaseUrl);
 
   try {
