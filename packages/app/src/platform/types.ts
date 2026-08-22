@@ -163,6 +163,21 @@ export type PasskeyAvailability = {
 };
 
 /**
+ * A passkey ceremony that failed, in words a support worker can act on.
+ *
+ * Dismissing the prompt is not one of these: that returns null. This is for
+ * the faults, which used to be swallowed by the same `catch` that absorbed a
+ * cancellation, so a browser that could not run the ceremony at all left the
+ * button looking like it did nothing.
+ */
+export class PasskeyError extends Error {
+  constructor(message: string, cause?: unknown) {
+    super(message, { cause });
+    this.name = 'PasskeyError';
+  }
+}
+
+/**
  * The two WebAuthn ceremonies, for signing in rather than for unlocking (#24).
  *
  * Separate from `SecureStore` on purpose. That one derives a key that never
@@ -171,9 +186,11 @@ export type PasskeyAvailability = {
  * jobs, and merging them would mean a screen could not tell which it was
  * asking for.
  *
- * Both return null when the person dismisses the prompt. Thinking better of it
- * is not a fault, and a screen that treats it as one shows an error to
- * somebody who did exactly what they meant to.
+ * Both return null when the person dismisses the prompt, and only then.
+ * Thinking better of it is not a fault, and a screen that treats it as one
+ * shows an error to somebody who did exactly what they meant to. Anything else
+ * throws `PasskeyError`, because a button that fails silently is worse than
+ * one that fails.
  */
 export interface Passkeys {
   availability(): Promise<PasskeyAvailability>;

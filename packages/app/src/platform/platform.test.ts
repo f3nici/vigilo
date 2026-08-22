@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { canOfferBiometric, getPlatform, isHandheld, isInstalled } from './index.js';
+import { canOfferBiometric, getPlatform, isHandheld, isInstalled, PasskeyError } from './index.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -87,6 +87,63 @@ describe('WebPasskeys', () => {
       supported: true,
       platformAuthenticator: false,
     });
+  });
+
+  /*
+   * The ceremonies used to absorb every rejection into null, and a caller
+   * treats null as "changed my mind" and stays quiet on purpose. A browser
+   * that could not run the ceremony at all left a button that did nothing and
+   * said nothing, which is what #24 was reported as after the fact.
+   */
+  const registrationOptions = {
+    challenge: 'AAAA',
+    rp: { name: 'Vigilo', id: 'localhost' },
+    user: { id: 'AAAA', name: 'a@b.c', displayName: 'A' },
+    pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+  };
+
+  const signInOptions = { challenge: 'AAAA', rpId: 'localhost' };
+
+  function credentialsThatFailWith(name: string): void {
+    const rejection = () => Promise.reject(new DOMException('no', name));
+    vi.stubGlobal('navigator', { credentials: { create: rejection, get: rejection } });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  }
+
+  it.each(['NotAllowedError', 'AbortError'])(
+    'treats %s as somebody changing their mind, not a fault',
+    async (name) => {
+      credentialsThatFailWith(name);
+      await expect(getPlatform().passkeys.create(registrationOptions)).resolves.toBeNull();
+      await expect(getPlatform().passkeys.get(signInOptions)).resolves.toBeNull();
+    },
+  );
+
+  it.each([
+    ['InvalidStateError', 'already has a passkey'],
+    ['NotSupportedError', 'cannot make a passkey'],
+    ['SecurityError', 'HTTPS'],
+    ['ConstraintError', 'screen lock'],
+  ])('turns %s into something a person can act on', async (name, fragment) => {
+    credentialsThatFailWith(name);
+    await expect(getPlatform().passkeys.create(registrationOptions)).rejects.toThrow(fragment);
+  });
+
+  it('names the ceremony in the fallback, so signing in never says "set up"', async () => {
+    credentialsThatFailWith('UnknownError');
+    await expect(getPlatform().passkeys.create(registrationOptions)).rejects.toThrow(
+      'could not be set up on this device',
+    );
+    await expect(getPlatform().passkeys.get(signInOptions)).rejects.toThrow(
+      'could not be used to sign you in',
+    );
+  });
+
+  it('throws a PasskeyError, so a view can show its wording as written', async () => {
+    credentialsThatFailWith('NotSupportedError');
+    await expect(getPlatform().passkeys.create(registrationOptions)).rejects.toBeInstanceOf(
+      PasskeyError,
+    );
   });
 });
 

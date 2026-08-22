@@ -4,7 +4,7 @@ import { describePasskey, type PasskeySummary, type QuickSignInSummary } from '@
 import FormError from '@/components/FormError.vue';
 import * as api from '@/api/client';
 import { ApiRequestError } from '@/api/client';
-import { canOfferBiometric, getPlatform, isInstalled } from '@/platform';
+import { canOfferBiometric, getPlatform, isInstalled, PasskeyError } from '@/platform';
 import {
   addPasskey,
   enableQuickSignIn,
@@ -99,11 +99,20 @@ async function createPasskey(): Promise<void> {
     }
     // Dismissing the prompt is a decision, not a failure, and says nothing.
   } catch (err) {
-    error.value =
-      err instanceof ApiRequestError ? err.message : 'That passkey could not be set up.';
+    error.value = passkeyMessage(err, 'That passkey could not be set up.');
   } finally {
     busy.value = false;
   }
+}
+
+/**
+ * A `PasskeyError` already carries wording written for the person reading it,
+ * so it is shown rather than replaced. Anything else gets the fallback.
+ */
+function passkeyMessage(err: unknown, fallback: string): string {
+  if (err instanceof PasskeyError) return err.message;
+  if (err instanceof ApiRequestError) return err.message;
+  return fallback;
 }
 
 async function removePasskey(passkey: PasskeySummary): Promise<void> {

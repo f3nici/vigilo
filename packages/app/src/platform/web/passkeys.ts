@@ -4,7 +4,7 @@ import {
   type PasskeyRegistration,
   type PasskeyTransport,
 } from '@vigilo/shared';
-import type { PasskeyAvailability, Passkeys } from '../types.js';
+import { PasskeyError, type PasskeyAvailability, type Passkeys } from '../types.js';
 
 /**
  * The WebAuthn ceremonies, on the PWA (#24).
@@ -20,6 +20,13 @@ import type { PasskeyAvailability, Passkeys } from '../types.js';
  * A cancelled prompt is not an error. Somebody who thinks better of it and
  * presses escape has not hit a fault, so the adapter returns null and the
  * screen carries on with the password field it was already showing.
+ *
+ * Everything else is. Both ceremonies used to `catch(() => null)`, which made
+ * a cancellation and a browser that cannot run WebAuthn at all indistinguishable
+ * to the caller, and the caller stays quiet for a cancellation on purpose. The
+ * result was a button that did nothing and said nothing. `ceremonyFailed`
+ * keeps the one case that means "changed my mind" and turns the rest into a
+ * `PasskeyError` with something a person can act on.
  */
 
 function toBase64Url(buffer: ArrayBuffer): string {
@@ -72,6 +79,51 @@ function requestOptions(json: JsonOptions): PublicKeyCredentialRequestOptions {
   };
 }
 
+/**
+ * Cancellation, or a fault worth saying out loud.
+ *
+ * `NotAllowedError` is the one WebAuthn raises both when somebody dismisses the
+ * prompt and when the ceremony times out. The two are the same thing to a
+ * person watching: nothing happened and they know why, so it returns null.
+ *
+ * `InvalidStateError` gets its own line because it is the common one and the
+ * generic wording is actively misleading: the ceremony was refused precisely
+ * because this authenticator already holds a passkey for this account, which
+ * is a success from yesterday rather than a failure today.
+ */
+function ceremonyFailed(ceremony: 'create' | 'get', error: unknown): null {
+  const name = error instanceof DOMException ? error.name : '';
+
+  if (name === 'NotAllowedError' || name === 'AbortError') return null;
+
+  // The detail is for whoever opens the console, never for the screen.
+  console.error(`passkey ${ceremony} failed`, error);
+
+  switch (name) {
+    case 'InvalidStateError':
+      throw new PasskeyError('This device already has a passkey for your account.', error);
+    case 'NotSupportedError':
+      throw new PasskeyError('This device cannot make a passkey Vigilo can use.', error);
+    case 'SecurityError':
+      throw new PasskeyError(
+        'Passkeys need Vigilo served over HTTPS on its own address. Tell whoever set up this server.',
+        error,
+      );
+    case 'ConstraintError':
+      throw new PasskeyError(
+        'This device needs a screen lock, fingerprint or face set up before it can hold a passkey.',
+        error,
+      );
+    default:
+      throw new PasskeyError(
+        ceremony === 'create'
+          ? 'The passkey could not be set up on this device.'
+          : 'That passkey could not be used to sign you in.',
+        error,
+      );
+  }
+}
+
 export class WebPasskeys implements Passkeys {
   async availability(): Promise<PasskeyAvailability> {
     if (typeof window === 'undefined' || typeof window.PublicKeyCredential === 'undefined') {
@@ -92,9 +144,14 @@ export class WebPasskeys implements Passkeys {
   }
 
   async create(options: JsonOptions): Promise<PasskeyRegistration | null> {
-    const credential = (await navigator.credentials
-      .create({ publicKey: creationOptions(options) })
-      .catch(() => null)) as PublicKeyCredential | null;
+    let credential: PublicKeyCredential | null;
+    try {
+      credential = (await navigator.credentials.create({
+        publicKey: creationOptions(options),
+      })) as PublicKeyCredential | null;
+    } catch (error) {
+      return ceremonyFailed('create', error);
+    }
 
     if (!credential) return null;
 
@@ -122,9 +179,14 @@ export class WebPasskeys implements Passkeys {
   }
 
   async get(options: JsonOptions): Promise<PasskeyAuthentication | null> {
-    const assertion = (await navigator.credentials
-      .get({ publicKey: requestOptions(options) })
-      .catch(() => null)) as PublicKeyCredential | null;
+    let assertion: PublicKeyCredential | null;
+    try {
+      assertion = (await navigator.credentials.get({
+        publicKey: requestOptions(options),
+      })) as PublicKeyCredential | null;
+    } catch (error) {
+      return ceremonyFailed('get', error);
+    }
 
     if (!assertion) return null;
 
