@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { sql } from 'drizzle-orm';
-import { addDays, localDateOf } from '@vigilo/shared';
+import { addDays, localDateOf, zonedTimeToUtc } from '@vigilo/shared';
 import {
   assign,
   auditActions,
@@ -191,7 +191,14 @@ describe('participant self-access', () => {
       id: randomUUID(),
       categoryId: fixture.categoryId,
       body,
-      occurredAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+      /*
+       * Midday today in the org timezone, not an offset from now. Thirty
+       * minutes ago is yesterday's date for the first half hour after
+       * midnight, and "my day" is a date rather than a rolling window, so
+       * these tests only failed when CI happened to run then. The diary takes
+       * a future occurredAt (D95), so midday is safe at any hour.
+       */
+      occurredAt: zonedTimeToUtc(today(), 12 * 60, MELBOURNE).toISOString(),
       visibleToParticipant,
     });
     expect(response.status).toBe(201);
